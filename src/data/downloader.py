@@ -74,30 +74,63 @@ def standardize_ohlcv(df: pd.DataFrame, symbol: str) -> pd.DataFrame:
     if df.empty:
         return pd.DataFrame()
 
+    df = df.copy()
+
+    # Handle MultiIndex columns from yfinance
+    if isinstance(df.columns, pd.MultiIndex):
+        flattened_columns = []
+        for col in df.columns:
+            if isinstance(col, tuple):
+                non_empty_parts = [str(part) for part in col if str(part).strip()]
+                flattened_columns.append("_".join(non_empty_parts))
+            else:
+                flattened_columns.append(str(col))
+        df.columns = flattened_columns
+    else:
+        df.columns = [str(col) for col in df.columns]
+
     df = df.reset_index()
 
-    # Normalize column names from yfinance
-    rename_map = {
-        "Date": "date",
-        "Datetime": "date",
-        "Open": "open",
-        "High": "high",
-        "Low": "low",
-        "Close": "close",
-        "Adj Close": "adj_close",
-        "Volume": "volume",
-        "Dividends": "dividends",
-        "Stock Splits": "stock_splits",
-    }
-    df = df.rename(columns=rename_map)
+    # Normalize column names
+    normalized_columns = {}
+    for col in df.columns:
+        col_lower = col.strip().lower()
 
-    # Some downloads may not contain actions columns depending on source/asset
-    if "dividends" not in df.columns:
-        df["dividends"] = 0.0
-    if "stock_splits" not in df.columns:
-        df["stock_splits"] = 0.0
+        if col_lower in ["date", "datetime"]:
+            normalized_columns[col] = "date"
+        elif col_lower.startswith("open"):
+            normalized_columns[col] = "open"
+        elif col_lower.startswith("high"):
+            normalized_columns[col] = "high"
+        elif col_lower.startswith("low"):
+            normalized_columns[col] = "low"
+        elif col_lower.startswith("close") and "adj" not in col_lower:
+            normalized_columns[col] = "close"
+        elif "adj" in col_lower and "close" in col_lower:
+            normalized_columns[col] = "adj_close"
+        elif col_lower.startswith("volume"):
+            normalized_columns[col] = "volume"
+        elif "dividend" in col_lower:
+            normalized_columns[col] = "dividends"
+        elif "split" in col_lower:
+            normalized_columns[col] = "stock_splits"
+
+    df = df.rename(columns=normalized_columns)
+
+    if "date" not in df.columns:
+        raise ValueError(f"Could not find date column for {symbol}. Columns: {list(df.columns)}")
+
+    if "close" not in df.columns:
+        raise ValueError(f"Could not find close column for {symbol}. Columns: {list(df.columns)}")
+
     if "adj_close" not in df.columns:
         df["adj_close"] = df["close"]
+
+    if "dividends" not in df.columns:
+        df["dividends"] = 0.0
+
+    if "stock_splits" not in df.columns:
+        df["stock_splits"] = 0.0
 
     df["symbol"] = symbol
     df["date"] = pd.to_datetime(df["date"]).dt.tz_localize(None)
@@ -122,7 +155,6 @@ def standardize_ohlcv(df: pd.DataFrame, symbol: str) -> pd.DataFrame:
     df = df[ordered_columns].sort_values("date").reset_index(drop=True)
 
     return df
-
 
 def download_symbol_data(
     symbol: str,
