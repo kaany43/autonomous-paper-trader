@@ -1,0 +1,13 @@
+universe:
+  name: phase1_nasdaq_core
+  symbols:
+    - AAPL
+    - MSFT
+    - NVDA
+    - AMZN
+    - META
+    - TSLA
+    - AMD
+    - NFLX
+    - QCOM
+    - GOOGL
