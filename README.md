@@ -15,4 +15,14 @@ The core idea is simple: the agent should manage a virtual wallet, act under rea
 
 ## Current Status
 
-Phase 1 in progress: building the core daily simulation engine.
+Phase 1 in progress: core daily simulation engine is available with momentum strategy and execution components.
+
+## Quick start
+
+Run an end-to-end paper backtest:
+
+```bash
+python -m src.run_backtest
+```
+
+Outputs are written under `outputs/backtests/` based on `config/settings.yaml`.
