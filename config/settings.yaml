@@ -1,0 +1,39 @@
+project:
+  name: autonomous-paper-trader
+  phase: phase-1
+
+data:
+  source: yfinance
+  start_date: "2020-01-01"
+  end_date: null
+  interval: "1d"
+  auto_adjust: false
+  actions: true
+
+portfolio:
+  initial_cash: 50.0
+  currency: "USD"
+  max_open_positions: 2
+  max_position_weight: 0.5
+  fractional_shares: true
+
+execution:
+  commission_rate: 0.001
+  slippage_rate: 0.001
+  execution_timing: "next_open"
+
+strategy:
+  name: momentum_v0
+  rebalance_frequency: "daily"
+  lookback_short: 20
+  lookback_long: 50
+  top_k: 2
+
+benchmark:
+  symbol: "QQQ"
+
+output:
+  save_trades_csv: true
+  save_portfolio_csv: true
+  save_positions_csv: true
+  save_metrics_json: true
