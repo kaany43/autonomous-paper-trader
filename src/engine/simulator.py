@@ -1,222 +1,398 @@
 from __future__ import annotations
 
-import json
-from dataclasses import dataclass
+from dataclasses import asdict
 from pathlib import Path
 from typing import Any
 
 import pandas as pd
 
-from src.engine.broker import Broker, ExecutionResult
+from src.engine.broker import Broker
 from src.engine.portfolio import Portfolio
+from src.strategy.momentum import MomentumStrategy
 from src.strategy.base import BaseStrategy, StrategySignal
 
 
-@dataclass
-class SimulationResult:
-    trades: pd.DataFrame
-    portfolio_history: pd.DataFrame
-    positions_history: pd.DataFrame
-    metrics: dict[str, Any]
+REPO_ROOT = Path(__file__).resolve().parents[2]
+PROCESSED_DATA_DIR = REPO_ROOT / "data" / "processed"
+FEATURES_FILE = PROCESSED_DATA_DIR / "market_features.parquet"
 
 
 class DailySimulator:
+    """
+    Daily backtest simulator.
+
+    Rules:
+    - Processes one trading day at a time in chronological order
+    - For each decision date, only rows up to that date are visible
+    - Target/label columns are removed before passing data to strategy
+    - Orders are executed using the same day's adj_close price
+    """
+
     def __init__(
         self,
+        market_data: pd.DataFrame,
         strategy: BaseStrategy,
-        broker: Broker,
         portfolio: Portfolio,
-        max_position_weight: float,
+        broker: Broker,
+        price_column: str = "adj_close",
     ) -> None:
-        if max_position_weight <= 0 or max_position_weight > 1:
-            raise ValueError("max_position_weight must be in (0, 1].")
-
+        self.market_data = self._prepare_market_data(market_data, price_column)
         self.strategy = strategy
-        self.broker = broker
         self.portfolio = portfolio
-        self.max_position_weight = float(max_position_weight)
+        self.broker = broker
+        self.price_column = price_column
+
+        self._portfolio_history: list[dict[str, Any]] = []
+        self._positions_history: list[dict[str, Any]] = []
+        self._trade_history: list[dict[str, Any]] = []
+        self._signal_history: list[dict[str, Any]] = []
 
     @staticmethod
-    def _build_open_price_map(day_df: pd.DataFrame) -> dict[str, float]:
-        rows = day_df.dropna(subset=["open"]) [["symbol", "open"]]
-        return {str(row["symbol"]): float(row["open"]) for _, row in rows.iterrows()}
-
-    @staticmethod
-    def _build_close_price_map(day_df: pd.DataFrame) -> dict[str, float]:
-        rows = day_df.dropna(subset=["close"]) [["symbol", "close"]]
-        return {str(row["symbol"]): float(row["close"]) for _, row in rows.iterrows()}
-
-    def _sell_all_quantity(self, signal: StrategySignal, open_prices: dict[str, float]) -> ExecutionResult | None:
-        position = self.portfolio.get_position(signal.symbol)
-        if position is None:
-            return None
-
-        market_price = open_prices.get(signal.symbol)
-        if market_price is None or market_price <= 0:
-            return None
-
-        return self.broker.sell(
-            portfolio=self.portfolio,
-            symbol=signal.symbol,
-            quantity=position.quantity,
-            market_price=market_price,
-        )
-
-    def _buy_with_risk_limit(self, signal: StrategySignal, open_prices: dict[str, float]) -> ExecutionResult | None:
-        market_price = open_prices.get(signal.symbol)
-        if market_price is None or market_price <= 0:
-            return None
-
-        max_alloc = self.portfolio.total_equity(open_prices) * self.max_position_weight
-        target_alloc = max_alloc
-
-        if signal.target_weight is not None:
-            target_alloc = self.portfolio.total_equity(open_prices) * float(signal.target_weight)
-
-        cash_to_allocate = min(self.portfolio.cash, max_alloc, target_alloc)
-        if cash_to_allocate <= 0:
-            return None
-
-        return self.broker.buy_with_cash_amount(
-            portfolio=self.portfolio,
-            symbol=signal.symbol,
-            cash_to_allocate=cash_to_allocate,
-            market_price=market_price,
-        )
-
-    def run(self, market_data: pd.DataFrame) -> SimulationResult:
+    def _prepare_market_data(
+        market_data: pd.DataFrame,
+        price_column: str,
+    ) -> pd.DataFrame:
         if market_data.empty:
             raise ValueError("market_data is empty.")
 
-        required_columns = {"date", "symbol", "open", "close"}
-        missing = sorted(required_columns - set(market_data.columns))
+        required_columns = {"date", "symbol", price_column}
+        missing = required_columns - set(market_data.columns)
         if missing:
-            raise ValueError(f"market_data missing required columns: {', '.join(missing)}")
-
-        df = market_data.copy()
-        df["date"] = pd.to_datetime(df["date"])
-        df = df.sort_values(["date", "symbol"]).reset_index(drop=True)
-
-        trades_rows: list[dict[str, Any]] = []
-        portfolio_rows: list[dict[str, Any]] = []
-        positions_rows: list[dict[str, Any]] = []
-
-        for decision_date in sorted(df["date"].dropna().unique()):
-            day_df = df.loc[df["date"] == decision_date].copy()
-            if day_df.empty:
-                continue
-
-            open_prices = self._build_open_price_map(day_df)
-            close_prices = self._build_close_price_map(day_df)
-
-            signals = self.strategy.generate_signals(
-                decision_date=decision_date,
-                market_data=df,
-                portfolio=self.portfolio,
+            raise ValueError(
+                f"market_data is missing required columns: {', '.join(sorted(missing))}"
             )
 
-            for signal in [s for s in signals if s.action == "SELL"]:
-                result = self._sell_all_quantity(signal, open_prices)
-                if result is not None:
-                    record = result.to_dict()
-                    record["date"] = decision_date
-                    record["reason_code"] = signal.reason_code
-                    trades_rows.append(record)
+        df = market_data.copy()
+        df["date"] = pd.to_datetime(df["date"]).dt.tz_localize(None)
+        df["symbol"] = df["symbol"].astype(str).str.upper().str.strip()
 
-            for signal in [s for s in signals if s.action == "BUY"]:
-                if self.portfolio.has_position(signal.symbol):
-                    continue
-
-                result = self._buy_with_risk_limit(signal, open_prices)
-                if result is not None:
-                    record = result.to_dict()
-                    record["date"] = decision_date
-                    record["reason_code"] = signal.reason_code
-                    trades_rows.append(record)
-
-            portfolio_rows.append(self.portfolio.portfolio_snapshot(decision_date, close_prices))
-            positions_rows.extend(self.portfolio.positions_snapshot(decision_date, close_prices))
-
-        trades_df = pd.DataFrame(trades_rows)
-        portfolio_history_df = pd.DataFrame(portfolio_rows)
-        positions_history_df = pd.DataFrame(positions_rows)
-
-        metrics = self._build_metrics(portfolio_history_df, trades_df)
-
-        return SimulationResult(
-            trades=trades_df,
-            portfolio_history=portfolio_history_df,
-            positions_history=positions_history_df,
-            metrics=metrics,
+        df = (
+            df.sort_values(["date", "symbol"])
+            .drop_duplicates(subset=["date", "symbol"], keep="last")
+            .reset_index(drop=True)
         )
 
-    def _build_metrics(self, portfolio_history: pd.DataFrame, trades: pd.DataFrame) -> dict[str, Any]:
-        if portfolio_history.empty:
-            return {
-                "initial_equity": float(self.portfolio.initial_cash),
-                "final_equity": float(self.portfolio.initial_cash),
-                "total_return": 0.0,
-                "max_drawdown": 0.0,
-                "trade_count": int(len(trades)),
-                "win_rate": None,
-            }
+        return df
 
-        equity = portfolio_history["total_equity"].astype(float)
-        running_max = equity.cummax()
-        drawdown = equity / running_max - 1.0
+    @staticmethod
+    def _drop_label_columns(df: pd.DataFrame) -> pd.DataFrame:
+        """
+        Remove forward-looking target columns before sending data to strategy.
+        """
+        label_columns = [col for col in df.columns if col.startswith("target_")]
+        if not label_columns:
+            return df
+        return df.drop(columns=label_columns)
 
-        initial_equity = float(equity.iloc[0])
-        final_equity = float(equity.iloc[-1])
-        total_return = float(final_equity / initial_equity - 1.0) if initial_equity > 0 else 0.0
+    def _all_trading_dates(self) -> list[pd.Timestamp]:
+        return [pd.Timestamp(d) for d in sorted(self.market_data["date"].dropna().unique())]
 
-        sell_trades = trades.loc[(trades.get("side") == "SELL") & (trades.get("success") == True)].copy()
-        if "realized_pnl" in sell_trades.columns and not sell_trades.empty:
-            wins = (sell_trades["realized_pnl"].fillna(0.0) > 0).sum()
-            win_rate = float(wins / len(sell_trades))
-        else:
-            win_rate = None
+    def _selected_trading_dates(
+        self,
+        start_date: str | pd.Timestamp | None,
+        end_date: str | pd.Timestamp | None,
+    ) -> list[pd.Timestamp]:
+        all_dates = self._all_trading_dates()
+
+        if not all_dates:
+            return []
+
+        start_ts = pd.Timestamp(start_date) if start_date is not None else all_dates[0]
+        end_ts = pd.Timestamp(end_date) if end_date is not None else all_dates[-1]
+
+        return [d for d in all_dates if start_ts <= d <= end_ts]
+
+    def _history_until(self, decision_date: pd.Timestamp) -> pd.DataFrame:
+        history = self.market_data.loc[self.market_data["date"] <= decision_date].copy()
+        history = self._drop_label_columns(history)
+        return history
+
+    def _day_prices(self, trading_date: pd.Timestamp) -> dict[str, float]:
+        day_df = self.market_data.loc[self.market_data["date"] == trading_date].copy()
+
+        if day_df.empty:
+            return {}
 
         return {
-            "initial_equity": initial_equity,
-            "final_equity": final_equity,
-            "total_return": total_return,
-            "max_drawdown": float(drawdown.min()) if not drawdown.empty else 0.0,
-            "trade_count": int(len(trades)),
-            "win_rate": win_rate,
+            str(row["symbol"]): float(row[self.price_column])
+            for _, row in day_df[["symbol", self.price_column]].dropna().iterrows()
+        }
+
+    @staticmethod
+    def _signal_to_row(signal: StrategySignal) -> dict[str, Any]:
+        row = asdict(signal)
+        return row
+
+    def _record_signals(self, signals: list[StrategySignal]) -> None:
+        for signal in signals:
+            self._signal_history.append(self._signal_to_row(signal))
+
+    def _record_daily_snapshots(
+        self,
+        trading_date: pd.Timestamp,
+        price_map: dict[str, float],
+    ) -> None:
+        self._portfolio_history.append(
+            self.portfolio.portfolio_snapshot(
+                date=trading_date,
+                price_map=price_map,
+            )
+        )
+        self._positions_history.extend(
+            self.portfolio.positions_snapshot(
+                date=trading_date,
+                price_map=price_map,
+            )
+        )
+
+    @staticmethod
+    def _sort_signals(signals: list[StrategySignal]) -> list[StrategySignal]:
+        action_priority = {"SELL": 0, "BUY": 1, "HOLD": 2}
+        return sorted(
+            signals,
+            key=lambda s: (
+                action_priority.get(str(s.action).upper(), 99),
+                -float(s.score),
+                str(s.symbol),
+            ),
+        )
+
+    def _execute_sell_signals(
+        self,
+        signals: list[StrategySignal],
+        trading_date: pd.Timestamp,
+        price_map: dict[str, float],
+    ) -> None:
+        for signal in signals:
+            if str(signal.action).upper() != "SELL":
+                continue
+
+            symbol = str(signal.symbol).upper()
+
+            if not self.portfolio.has_position(symbol):
+                continue
+
+            market_price = price_map.get(symbol)
+            if market_price is None:
+                continue
+
+            position = self.portfolio.get_position(symbol)
+            if position is None or position.quantity <= 0:
+                continue
+
+            result = self.broker.sell(
+                portfolio=self.portfolio,
+                symbol=symbol,
+                quantity=float(position.quantity),
+                market_price=float(market_price),
+            )
+
+            row = result.to_dict()
+            row["date"] = trading_date
+            self._trade_history.append(row)
+
+    def _execute_buy_signals(
+        self,
+        signals: list[StrategySignal],
+        trading_date: pd.Timestamp,
+        price_map: dict[str, float],
+    ) -> None:
+        buy_signals = [s for s in signals if str(s.action).upper() == "BUY"]
+        if not buy_signals:
+            return
+
+        equity_after_sells = self.portfolio.total_equity(price_map)
+
+        for idx, signal in enumerate(buy_signals):
+            symbol = str(signal.symbol).upper()
+
+            if self.portfolio.has_position(symbol):
+                continue
+
+            market_price = price_map.get(symbol)
+            if market_price is None:
+                continue
+
+            if signal.target_weight is not None and float(signal.target_weight) > 0:
+                cash_to_allocate = min(
+                    float(self.portfolio.cash),
+                    float(signal.target_weight) * float(equity_after_sells),
+                )
+            else:
+                remaining = len(buy_signals) - idx
+                if remaining <= 0:
+                    break
+                cash_to_allocate = float(self.portfolio.cash) / float(remaining)
+
+            if cash_to_allocate <= 0:
+                continue
+
+            result = self.broker.buy_with_cash_amount(
+                portfolio=self.portfolio,
+                symbol=symbol,
+                cash_to_allocate=float(cash_to_allocate),
+                market_price=float(market_price),
+            )
+
+            row = result.to_dict()
+            row["date"] = trading_date
+            self._trade_history.append(row)
+
+    def _process_day(self, trading_date: pd.Timestamp) -> None:
+        historical_data = self._history_until(trading_date)
+
+        signals = self.strategy.generate_signals(
+            decision_date=trading_date,
+            market_data=historical_data,
+            portfolio=self.portfolio,
+        )
+        signals = self._sort_signals(signals)
+
+        self._record_signals(signals)
+
+        price_map = self._day_prices(trading_date)
+
+        self._execute_sell_signals(
+            signals=signals,
+            trading_date=trading_date,
+            price_map=price_map,
+        )
+        self._execute_buy_signals(
+            signals=signals,
+            trading_date=trading_date,
+            price_map=price_map,
+        )
+
+        self._record_daily_snapshots(
+            trading_date=trading_date,
+            price_map=price_map,
+        )
+
+    def run(
+        self,
+        start_date: str | pd.Timestamp | None = None,
+        end_date: str | pd.Timestamp | None = None,
+    ) -> dict[str, pd.DataFrame]:
+        self._portfolio_history.clear()
+        self._positions_history.clear()
+        self._trade_history.clear()
+        self._signal_history.clear()
+
+        trading_dates = self._selected_trading_dates(
+            start_date=start_date,
+            end_date=end_date,
+        )
+
+        if not trading_dates:
+            raise ValueError("No trading dates found for the requested range.")
+
+        for trading_date in trading_dates:
+            self._process_day(trading_date)
+
+        portfolio_history = pd.DataFrame(self._portfolio_history)
+        positions_history = pd.DataFrame(self._positions_history)
+        trade_history = pd.DataFrame(self._trade_history)
+        signal_history = pd.DataFrame(self._signal_history)
+
+        if not portfolio_history.empty:
+            portfolio_history = portfolio_history.sort_values("date").reset_index(drop=True)
+
+        if not positions_history.empty:
+            positions_history = positions_history.sort_values(
+                ["date", "symbol"]
+            ).reset_index(drop=True)
+
+        if not trade_history.empty:
+            trade_history = trade_history.sort_values(
+                ["date", "symbol", "side"]
+            ).reset_index(drop=True)
+
+        if not signal_history.empty:
+            signal_history = signal_history.sort_values(
+                ["date", "symbol", "action"]
+            ).reset_index(drop=True)
+
+        return {
+            "portfolio_history": portfolio_history,
+            "positions_history": positions_history,
+            "trade_history": trade_history,
+            "signal_history": signal_history,
         }
 
 
-def save_simulation_outputs(
-    result: SimulationResult,
-    output_dir: Path,
-    save_trades_csv: bool = True,
-    save_portfolio_csv: bool = True,
-    save_positions_csv: bool = True,
-    save_metrics_json: bool = True,
-) -> dict[str, Path]:
-    output_dir.mkdir(parents=True, exist_ok=True)
+def load_feature_data() -> pd.DataFrame:
+    if not FEATURES_FILE.exists():
+        raise FileNotFoundError(
+            f"Feature dataset not found: {FEATURES_FILE}\n"
+            "Run `python -m src.data.features` first."
+        )
 
-    written: dict[str, Path] = {}
+    df = pd.read_parquet(FEATURES_FILE)
+    if df.empty:
+        raise ValueError("Loaded feature dataset is empty.")
 
-    if save_trades_csv:
-        path = output_dir / "trades.csv"
-        result.trades.to_csv(path, index=False)
-        written["trades"] = path
+    return df
 
-    if save_portfolio_csv:
-        path = output_dir / "portfolio.csv"
-        result.portfolio_history.to_csv(path, index=False)
-        written["portfolio"] = path
 
-    if save_positions_csv:
-        path = output_dir / "positions.csv"
-        result.positions_history.to_csv(path, index=False)
-        written["positions"] = path
+def main() -> None:
+    print("Loading processed market features...")
+    market_data = load_feature_data()
 
-    if save_metrics_json:
-        path = output_dir / "metrics.json"
-        with path.open("w", encoding="utf-8") as f:
-            json.dump(result.metrics, f, indent=2)
-        written["metrics"] = path
+    strategy = MomentumStrategy(
+        max_open_positions=2,
+        top_k=2,
+        min_score=0.0,
+    )
+    portfolio = Portfolio(initial_cash=10_000.0)
+    broker = Broker(
+        commission_rate=0.001,
+        slippage_rate=0.001,
+        fractional_shares=True,
+    )
 
-    return written
+    simulator = DailySimulator(
+        market_data=market_data,
+        strategy=strategy,
+        portfolio=portfolio,
+        broker=broker,
+        price_column="adj_close",
+    )
+
+    start_date = market_data["date"].min()
+    end_date = market_data["date"].max()
+
+    print(f"Running backtest from {pd.Timestamp(start_date).date()} to {pd.Timestamp(end_date).date()} ...")
+    results = simulator.run(start_date=start_date, end_date=end_date)
+
+    portfolio_history = results["portfolio_history"]
+    trade_history = results["trade_history"]
+    signal_history = results["signal_history"]
+
+    print("-" * 60)
+    print("Backtest complete.")
+    print(f"Days processed: {len(portfolio_history)}")
+    print(f"Trades executed: {len(trade_history)}")
+    print(f"Signals generated: {len(signal_history)}")
+
+    if not portfolio_history.empty:
+        last_row = portfolio_history.iloc[-1]
+        print(f"Final cash: {last_row['cash']:.2f}")
+        print(f"Final total equity: {last_row['total_equity']:.2f}")
+        print(f"Realized PnL: {last_row['realized_pnl']:.2f}")
+        print(f"Unrealized PnL: {last_row['unrealized_pnl']:.2f}")
+
+    print("-" * 60)
+    print("Portfolio history preview:")
+    print(portfolio_history.head(5))
+
+    print("-" * 60)
+    print("Trade history preview:")
+    print(trade_history.head(10))
+
+    print("-" * 60)
+    print("Signal history preview:")
+    print(signal_history.head(10))
+
+
+if __name__ == "__main__":
+    main()
