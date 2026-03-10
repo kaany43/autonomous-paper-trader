@@ -20,3 +20,4 @@ outputs/charts/*
 
 test.py
 src/engine/test_portfolio_manual.py
+src/engine/test_broker_manual.py
