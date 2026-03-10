@@ -17,3 +17,5 @@ outputs/reports/*
 outputs/charts/*
 
 !.gitkeep
+
+test.py
