@@ -19,3 +19,4 @@ outputs/charts/*
 !.gitkeep
 
 test.py
+src/engine/test_portfolio_manual.py
