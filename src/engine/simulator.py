@@ -14,6 +14,7 @@ import pandas as pd
 
 from src.engine.broker import Broker
 from src.engine.portfolio import Portfolio
+from src.engine.order_builder import OrderBuilder
 from src.strategy.momentum import MomentumStrategy
 from src.strategy.base import BaseStrategy, StrategySignal
 
@@ -53,6 +54,16 @@ class DailySimulator:
         self._trade_history: list[dict[str, Any]] = []
         self._signal_history: list[dict[str, Any]] = []
         self._pending_signals: dict[pd.Timestamp, list[StrategySignal]] = {}
+
+        max_open_positions = int(getattr(strategy, "max_open_positions", 1) or 1)
+        max_position_size = getattr(strategy, "max_position_size", None)
+        self.order_builder = OrderBuilder(
+            max_open_positions=max_open_positions,
+            max_position_size=max_position_size,
+            fractional_shares=self.broker.fractional_shares,
+            commission_rate=self.broker.commission_rate,
+            slippage_rate=self.broker.slippage_rate,
+        )
 
     def _ensure_runtime_state(self) -> None:
         """
@@ -184,88 +195,41 @@ class DailySimulator:
             ),
         )
 
-    def _execute_sell_signals(
+    def _execute_orders(
         self,
-        signals: list[StrategySignal],
+        orders: list[dict[str, Any]],
         execution_date: pd.Timestamp,
-        price_map: dict[str, float],
+        decision_date: pd.Timestamp,
     ) -> None:
-        for signal in signals:
-            if str(signal.action).upper() != "SELL":
+        for order in orders:
+            side = str(order.get("side", "")).upper()
+            symbol = str(order.get("symbol", "")).upper()
+            quantity = float(order.get("quantity", 0.0) or 0.0)
+            market_price = order.get("market_price")
+
+            if not symbol or side not in {"BUY", "SELL"}:
+                continue
+            if quantity <= 0 or market_price is None or float(market_price) <= 0:
                 continue
 
-            symbol = str(signal.symbol).upper()
-
-            if not self.portfolio.has_position(symbol):
-                continue
-
-            market_price = price_map.get(symbol)
-            if market_price is None:
-                continue
-
-            position = self.portfolio.get_position(symbol)
-            if position is None or position.quantity <= 0:
-                continue
-
-            result = self.broker.sell(
-                portfolio=self.portfolio,
-                symbol=symbol,
-                quantity=float(position.quantity),
-                market_price=float(market_price),
-            )
-
-            row = result.to_dict()
-            row["date"] = execution_date
-            row["decision_date"] = pd.Timestamp(signal.date)
-            row["execution_date"] = execution_date
-            self._trade_history.append(row)
-
-    def _execute_buy_signals(
-        self,
-        signals: list[StrategySignal],
-        execution_date: pd.Timestamp,
-        price_map: dict[str, float],
-    ) -> None:
-        buy_signals = [s for s in signals if str(s.action).upper() == "BUY"]
-        if not buy_signals:
-            return
-
-        equity_after_sells = self.portfolio.total_equity(price_map)
-
-        for idx, signal in enumerate(buy_signals):
-            symbol = str(signal.symbol).upper()
-
-            if self.portfolio.has_position(symbol):
-                continue
-
-            market_price = price_map.get(symbol)
-            if market_price is None:
-                continue
-
-            if signal.target_weight is not None and float(signal.target_weight) > 0:
-                cash_to_allocate = min(
-                    float(self.portfolio.cash),
-                    float(signal.target_weight) * float(equity_after_sells),
+            if side == "SELL":
+                result = self.broker.sell(
+                    portfolio=self.portfolio,
+                    symbol=symbol,
+                    quantity=quantity,
+                    market_price=float(market_price),
                 )
             else:
-                remaining = len(buy_signals) - idx
-                if remaining <= 0:
-                    break
-                cash_to_allocate = float(self.portfolio.cash) / float(remaining)
-
-            if cash_to_allocate <= 0:
-                continue
-
-            result = self.broker.buy_with_cash_amount(
-                portfolio=self.portfolio,
-                symbol=symbol,
-                cash_to_allocate=float(cash_to_allocate),
-                market_price=float(market_price),
-            )
+                result = self.broker.buy(
+                    portfolio=self.portfolio,
+                    symbol=symbol,
+                    quantity=quantity,
+                    market_price=float(market_price),
+                )
 
             row = result.to_dict()
             row["date"] = execution_date
-            row["decision_date"] = pd.Timestamp(signal.date)
+            row["decision_date"] = pd.Timestamp(decision_date)
             row["execution_date"] = execution_date
             self._trade_history.append(row)
 
@@ -309,15 +273,19 @@ class DailySimulator:
         signals = self._sort_signals(pending)
         price_map = self._day_prices(execution_date)
 
-        self._execute_sell_signals(
+        decision_date = pd.Timestamp(signals[0].date)
+
+        orders = self.order_builder.build_orders(
             signals=signals,
-            execution_date=execution_date,
+            portfolio=self.portfolio,
             price_map=price_map,
+            available_cash=float(self.portfolio.cash),
         )
-        self._execute_buy_signals(
-            signals=signals,
+
+        self._execute_orders(
+            orders=orders,
             execution_date=execution_date,
-            price_map=price_map,
+            decision_date=decision_date,
         )
 
     def _process_day(
