@@ -1,0 +1,107 @@
+name: Feature Request
+description: Suggest a new feature or improvement
+title: "[Feature] "
+labels: ["feature"]
+body:
+  - type: markdown
+    attributes:
+      value: |
+        Thanks for suggesting an improvement for **Autonomous Paper Trader**.
+        Please keep the proposal focused and aligned with the project scope and roadmap.
+
+  - type: dropdown
+    id: area
+    attributes:
+      label: Area
+      description: Which part of the project does this request affect most?
+      options:
+        - area:data
+        - area:engine
+        - area:strategy
+        - documentation
+        - portfolio-demo
+        - other
+    validations:
+      required: true
+
+  - type: input
+    id: summary
+    attributes:
+      label: Feature Summary
+      description: A short title for the request
+      placeholder: Example = Add deterministic order allocation layer
+    validations:
+      required: true
+
+  - type: textarea
+    id: problem
+    attributes:
+      label: Problem / Motivation
+      description: What problem does this solve? Why is this feature needed?
+      placeholder: Describe the need, limitation, or opportunity
+    validations:
+      required: true
+
+  - type: textarea
+    id: proposal
+    attributes:
+      label: Proposed Solution
+      description: Describe the feature or improvement you want
+      placeholder: Explain the expected behavior or design direction
+    validations:
+      required: true
+
+  - type: textarea
+    id: scope
+    attributes:
+      label: Suggested Scope
+      description: List the main tasks, components, or acceptance criteria if you have them
+      placeholder: |
+        - add ...
+        - update ...
+        - ensure ...
+        - acceptance criteria: ...
+    validations:
+      required: true
+
+  - type: textarea
+    id: alternatives
+    attributes:
+      label: Alternatives Considered
+      description: Optional alternative approaches, trade-offs, or reasons to avoid a different solution
+
+  - type: dropdown
+    id: priority
+    attributes:
+      label: Priority
+      description: How important is this request relative to the roadmap?
+      options:
+        - nice to have
+        - useful
+        - important
+        - milestone-critical
+    validations:
+      required: true
+
+  - type: input
+    id: related_issue
+    attributes:
+      label: Related Issue / Milestone
+      description: Link any related issue, PR, or milestone if applicable
+      placeholder: Example = #20 / M2
+
+  - type: textarea
+    id: additional_context
+    attributes:
+      label: Additional Context
+      description: Add any extra notes, examples, references, or implementation ideas
+
+  - type: checkboxes
+    id: checks
+    attributes:
+      label: Confirmation
+      options:
+        - label: I searched existing issues and did not find an obvious duplicate
+          required: true
+        - label: This request is reasonably aligned with the repository scope
+          required: true
