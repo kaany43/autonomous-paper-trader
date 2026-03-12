@@ -1,0 +1,107 @@
+name: Bug Report
+description: Report something that is not working as expected
+title: "[Bug] "
+labels: ["bug"]
+body:
+  - type: markdown
+    attributes:
+      value: |
+        Thanks for reporting a bug in **Autonomous Paper Trader**.
+        Please provide enough detail so the issue can be reproduced and fixed efficiently.
+
+  - type: dropdown
+    id: area
+    attributes:
+      label: Area
+      description: Which part of the project is affected?
+      options:
+        - area:data
+        - area:engine
+        - area:strategy
+        - documentation
+        - other
+    validations:
+      required: true
+
+  - type: input
+    id: summary
+    attributes:
+      label: Bug Summary
+      description: A short description of the problem
+      placeholder: Example = Broker allows duplicate buy orders on the same symbol
+    validations:
+      required: true
+
+  - type: textarea
+    id: current_behavior
+    attributes:
+      label: Current Behavior
+      description: What is happening right now?
+      placeholder: Describe the incorrect behavior clearly
+    validations:
+      required: true
+
+  - type: textarea
+    id: expected_behavior
+    attributes:
+      label: Expected Behavior
+      description: What should happen instead?
+      placeholder: Describe the expected behavior
+    validations:
+      required: true
+
+  - type: textarea
+    id: steps
+    attributes:
+      label: Steps to Reproduce
+      description: Provide a minimal sequence of steps to reproduce the issue
+      placeholder: |
+        1. Run ...
+        2. Load ...
+        3. Call ...
+        4. Observe ...
+    validations:
+      required: true
+
+  - type: textarea
+    id: logs
+    attributes:
+      label: Error Output / Logs / Traceback
+      description: Paste any relevant logs, error messages, or traceback
+      render: shell
+
+  - type: input
+    id: version
+    attributes:
+      label: Affected Version
+      description: Release version, branch, or commit if known
+      placeholder: Example = v0.1.0 / main / commit hash
+
+  - type: dropdown
+    id: severity
+    attributes:
+      label: Severity
+      description: How much does this issue affect development or usage?
+      options:
+        - low
+        - medium
+        - high
+        - critical
+    validations:
+      required: true
+
+  - type: textarea
+    id: additional_context
+    attributes:
+      label: Additional Context
+      description: Add screenshots, assumptions, related issues, or anything else relevant
+
+  - type: checkboxes
+    id: checks
+    attributes:
+      label: Confirmation
+      options:
+        - label: I searched existing issues and did not find an obvious duplicate
+          required: true
+        - label: I included enough information to help reproduce the issue
+          required: true

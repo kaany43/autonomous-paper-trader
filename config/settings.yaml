@@ -1,6 +1,6 @@
 project:
   name: autonomous-paper-trader
-  phase: phase-1
+  phase: phase-2
 
 data:
   source: yfinance
@@ -11,7 +11,7 @@ data:
   actions: true
 
 portfolio:
-  initial_cash: 50.0
+  initial_cash: 500.0
   currency: "USD"
   max_open_positions: 2
   max_position_weight: 0.5
