@@ -1,7 +1,13 @@
 from __future__ import annotations
 
-from dataclasses import asdict
+import sys
 from pathlib import Path
+
+_PROJECT_ROOT = Path(__file__).resolve().parents[2]
+if str(_PROJECT_ROOT) not in sys.path:
+    sys.path.insert(0, str(_PROJECT_ROOT))
+
+from dataclasses import asdict
 from typing import Any
 
 import pandas as pd
@@ -25,7 +31,7 @@ class DailySimulator:
     - Processes one trading day at a time in chronological order
     - For each decision date, only rows up to that date are visible
     - Target/label columns are removed before passing data to strategy
-    - Orders are executed using the same day's adj_close price
+    - Orders decided on day t are executed on the next trading day
     """
 
     def __init__(
@@ -46,6 +52,18 @@ class DailySimulator:
         self._positions_history: list[dict[str, Any]] = []
         self._trade_history: list[dict[str, Any]] = []
         self._signal_history: list[dict[str, Any]] = []
+        self._pending_signals: dict[pd.Timestamp, list[StrategySignal]] = {}
+
+    def _ensure_runtime_state(self) -> None:
+        """
+        Backward-compatible guard for runtime attributes.
+
+        Some environments may execute code with stale artifacts where newly added
+        attributes are missing at runtime. This method ensures required mutable
+        containers exist before simulation steps proceed.
+        """
+        if not hasattr(self, "_pending_signals") or self._pending_signals is None:
+            self._pending_signals = {}
 
     @staticmethod
     def _prepare_market_data(
@@ -123,9 +141,18 @@ class DailySimulator:
         row = asdict(signal)
         return row
 
-    def _record_signals(self, signals: list[StrategySignal]) -> None:
+    def _record_signals(
+        self,
+        signals: list[StrategySignal],
+        scheduled_execution_date: pd.Timestamp | None,
+        schedule_status: str,
+    ) -> None:
         for signal in signals:
-            self._signal_history.append(self._signal_to_row(signal))
+            row = self._signal_to_row(signal)
+            row["decision_date"] = pd.Timestamp(signal.date)
+            row["scheduled_execution_date"] = scheduled_execution_date
+            row["schedule_status"] = schedule_status
+            self._signal_history.append(row)
 
     def _record_daily_snapshots(
         self,
@@ -160,7 +187,7 @@ class DailySimulator:
     def _execute_sell_signals(
         self,
         signals: list[StrategySignal],
-        trading_date: pd.Timestamp,
+        execution_date: pd.Timestamp,
         price_map: dict[str, float],
     ) -> None:
         for signal in signals:
@@ -188,13 +215,15 @@ class DailySimulator:
             )
 
             row = result.to_dict()
-            row["date"] = trading_date
+            row["date"] = execution_date
+            row["decision_date"] = pd.Timestamp(signal.date)
+            row["execution_date"] = execution_date
             self._trade_history.append(row)
 
     def _execute_buy_signals(
         self,
         signals: list[StrategySignal],
-        trading_date: pd.Timestamp,
+        execution_date: pd.Timestamp,
         price_map: dict[str, float],
     ) -> None:
         buy_signals = [s for s in signals if str(s.action).upper() == "BUY"]
@@ -235,10 +264,69 @@ class DailySimulator:
             )
 
             row = result.to_dict()
-            row["date"] = trading_date
+            row["date"] = execution_date
+            row["decision_date"] = pd.Timestamp(signal.date)
+            row["execution_date"] = execution_date
             self._trade_history.append(row)
 
-    def _process_day(self, trading_date: pd.Timestamp) -> None:
+    @staticmethod
+    def _next_trading_date_map(
+        trading_dates: list[pd.Timestamp],
+    ) -> dict[pd.Timestamp, pd.Timestamp | None]:
+        next_map: dict[pd.Timestamp, pd.Timestamp | None] = {}
+        for idx, trading_date in enumerate(trading_dates):
+            next_map[trading_date] = trading_dates[idx + 1] if idx + 1 < len(trading_dates) else None
+        return next_map
+
+    def _schedule_signals(
+        self,
+        signals: list[StrategySignal],
+        next_execution_date: pd.Timestamp | None,
+    ) -> None:
+        if not signals:
+            return
+
+        if next_execution_date is None:
+            self._record_signals(
+                signals=signals,
+                scheduled_execution_date=None,
+                schedule_status="NO_NEXT_TRADING_SESSION",
+            )
+            return
+
+        self._record_signals(
+            signals=signals,
+            scheduled_execution_date=next_execution_date,
+            schedule_status="SCHEDULED",
+        )
+        self._pending_signals.setdefault(next_execution_date, []).extend(signals)
+
+    def _execute_pending_signals(self, execution_date: pd.Timestamp) -> None:
+        pending = self._pending_signals.pop(execution_date, [])
+        if not pending:
+            return
+
+        signals = self._sort_signals(pending)
+        price_map = self._day_prices(execution_date)
+
+        self._execute_sell_signals(
+            signals=signals,
+            execution_date=execution_date,
+            price_map=price_map,
+        )
+        self._execute_buy_signals(
+            signals=signals,
+            execution_date=execution_date,
+            price_map=price_map,
+        )
+
+    def _process_day(
+        self,
+        trading_date: pd.Timestamp,
+        next_execution_date: pd.Timestamp | None,
+    ) -> None:
+        self._execute_pending_signals(execution_date=trading_date)
+
         historical_data = self._history_until(trading_date)
 
         signals = self.strategy.generate_signals(
@@ -248,20 +336,12 @@ class DailySimulator:
         )
         signals = self._sort_signals(signals)
 
-        self._record_signals(signals)
+        self._schedule_signals(
+            signals=signals,
+            next_execution_date=next_execution_date,
+        )
 
         price_map = self._day_prices(trading_date)
-
-        self._execute_sell_signals(
-            signals=signals,
-            trading_date=trading_date,
-            price_map=price_map,
-        )
-        self._execute_buy_signals(
-            signals=signals,
-            trading_date=trading_date,
-            price_map=price_map,
-        )
 
         self._record_daily_snapshots(
             trading_date=trading_date,
@@ -285,10 +365,14 @@ class DailySimulator:
 
         if not trading_dates:
             raise ValueError("No trading dates found for the requested range.")
+        
+        next_date_map = self._next_trading_date_map(trading_dates)
 
         for trading_date in trading_dates:
-            self._process_day(trading_date)
-
+            self._process_day(
+                trading_date=trading_date,
+                next_execution_date=next_date_map.get(trading_date),
+            )
         portfolio_history = pd.DataFrame(self._portfolio_history)
         positions_history = pd.DataFrame(self._positions_history)
         trade_history = pd.DataFrame(self._trade_history)
