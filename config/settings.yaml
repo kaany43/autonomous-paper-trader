@@ -30,7 +30,7 @@ strategy:
   top_k: 2
 
 benchmark:
-  symbol: "QQQ"
+  benchmark_symbol: "QQQ"
 
 output:
   save_trades_csv: true

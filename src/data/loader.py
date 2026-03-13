@@ -68,15 +68,26 @@ def get_target_symbols() -> list[str]:
     settings = load_settings()
     universe_symbols = load_universe()
 
-    benchmark_symbol = (
-        settings.get("benchmark", {}).get("symbol", "") or ""
-    ).strip().upper()
+    benchmark_symbol = get_benchmark_symbol(settings)
 
     symbols = list(universe_symbols)
     if benchmark_symbol and benchmark_symbol not in symbols:
         symbols.append(benchmark_symbol)
 
     return symbols
+
+
+def get_benchmark_symbol(settings: dict[str, Any] | None = None) -> str:
+    """Return normalized benchmark symbol from settings."""
+    resolved_settings = settings or load_settings()
+    benchmark_cfg = resolved_settings.get("benchmark", {})
+    raw_symbol = (
+        benchmark_cfg.get("benchmark_symbol")
+        or benchmark_cfg.get("symbol")
+        or resolved_settings.get("benchmark_symbol")
+        or ""
+    )
+    return str(raw_symbol).strip().upper()
 
 
 def validate_schema(df: pd.DataFrame, symbol: str) -> None:
