@@ -24,6 +24,7 @@ PROCESSED_DATA_DIR = REPO_ROOT / "data" / "processed"
 FEATURES_FILE = PROCESSED_DATA_DIR / "market_features.parquet"
 BACKTEST_OUTPUTS_DIR = REPO_ROOT / "outputs" / "backtests"
 TRADE_LOG_FILENAME = "trade_log.csv"
+PORTFOLIO_SNAPSHOT_FILENAME = "daily_portfolio_snapshots.csv"
 
 TRADE_LOG_COLUMNS = [
     "order_id",
@@ -44,6 +45,54 @@ TRADE_LOG_COLUMNS = [
     "strategy_name",
     "created_at",
 ]
+
+PORTFOLIO_SNAPSHOT_COLUMNS = [
+    "date",
+    "cash_balance",
+    "invested_value",
+    "total_equity",
+    "realized_pnl",
+    "unrealized_pnl",
+    "open_positions",
+]
+
+
+class PortfolioSnapshotWriter:
+    @staticmethod
+    def from_portfolio_history(portfolio_history: pd.DataFrame) -> pd.DataFrame:
+        snapshots = portfolio_history.copy()
+        if snapshots.empty:
+            return pd.DataFrame(columns=PORTFOLIO_SNAPSHOT_COLUMNS)
+
+        snapshots["date"] = pd.to_datetime(snapshots["date"]).dt.normalize()
+        snapshots = snapshots.rename(
+            columns={
+                "cash": "cash_balance",
+                "number_of_positions": "open_positions",
+            }
+        )
+
+        snapshots = snapshots[PORTFOLIO_SNAPSHOT_COLUMNS]
+        snapshots = snapshots.sort_values("date").drop_duplicates(subset=["date"], keep="last")
+
+        for column in [
+            "cash_balance",
+            "invested_value",
+            "total_equity",
+            "realized_pnl",
+            "unrealized_pnl",
+            "open_positions",
+        ]:
+            snapshots[column] = pd.to_numeric(snapshots[column], errors="coerce")
+
+        snapshots = snapshots.reset_index(drop=True)
+        return snapshots
+
+    @staticmethod
+    def write_csv(snapshots: pd.DataFrame, output_path: Path) -> Path:
+        output_path.parent.mkdir(parents=True, exist_ok=True)
+        snapshots.to_csv(output_path, index=False)
+        return output_path
 
 
 class DailySimulator:
@@ -481,6 +530,8 @@ class DailySimulator:
         if not portfolio_history.empty:
             portfolio_history = portfolio_history.sort_values("date").reset_index(drop=True)
 
+        portfolio_snapshots = PortfolioSnapshotWriter.from_portfolio_history(portfolio_history)
+
         if not positions_history.empty:
             positions_history = positions_history.sort_values(
                 ["date", "symbol"]
@@ -503,15 +554,19 @@ class DailySimulator:
 
         BACKTEST_OUTPUTS_DIR.mkdir(parents=True, exist_ok=True)
         trade_log_path = BACKTEST_OUTPUTS_DIR / TRADE_LOG_FILENAME
+        portfolio_snapshots_path = BACKTEST_OUTPUTS_DIR / PORTFOLIO_SNAPSHOT_FILENAME
         trade_log.to_csv(trade_log_path, index=False)
+        PortfolioSnapshotWriter.write_csv(portfolio_snapshots, portfolio_snapshots_path)
 
         return {
             "portfolio_history": portfolio_history,
+            "portfolio_snapshots": portfolio_snapshots,
             "positions_history": positions_history,
             "trade_history": trade_history,
             "signal_history": signal_history,
             "trade_log": trade_log,
             "trade_log_path": trade_log_path,
+            "portfolio_snapshots_path": portfolio_snapshots_path,
         }
 
 
