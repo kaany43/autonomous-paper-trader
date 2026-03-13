@@ -85,6 +85,7 @@ class OrderBuilder:
             return []
 
         cash = float(portfolio.cash if available_cash is None else available_cash)
+        equity = float(cash + portfolio.invested_value(price_map))
         current_positions = {
             symbol: position
             for symbol, position in portfolio.positions.items()
@@ -101,6 +102,8 @@ class OrderBuilder:
 
         sell_orders: list[ExecutableOrder] = []
         sold_symbols: set[str] = set()
+        total_sell_proceeds = 0.0
+        total_sell_proceeds_multiplier = (1.0 - self.slippage_rate) * (1.0 - self.commission_rate)
         for signal in sell_candidates:
             symbol = signal["symbol"]
             if symbol in sold_symbols:
@@ -119,7 +122,15 @@ class OrderBuilder:
                     market_price=float(market_price),
                 )
             )
+            total_sell_proceeds += (
+                float(position.quantity)
+                * float(market_price)
+                * total_sell_proceeds_multiplier
+            )
             sold_symbols.add(symbol)
+
+        cash += total_sell_proceeds
+
 
         post_sell_open_positions = len(current_positions) - len(sell_orders)
         slots_left = max(self.max_open_positions - post_sell_open_positions, 0)
@@ -153,7 +164,6 @@ class OrderBuilder:
             key=lambda s: (-float(s["score"]), s["symbol"]),
         )
 
-        equity = float(cash + portfolio.invested_value(price_map))
         max_notional = float(max(equity * self.max_position_size, 0.0))
         total_buy_cost_per_share_multiplier = (1.0 + self.slippage_rate) * (1.0 + self.commission_rate)
 

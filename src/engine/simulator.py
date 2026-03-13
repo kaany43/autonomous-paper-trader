@@ -15,6 +15,7 @@ import pandas as pd
 from src.engine.broker import Broker
 from src.engine.portfolio import Portfolio
 from src.engine.order_builder import OrderBuilder
+from src.engine.metrics import METRICS_FILENAME, compute_backtest_metrics, write_metrics_json
 from src.strategy.momentum import MomentumStrategy
 from src.strategy.base import BaseStrategy, StrategySignal
 
@@ -27,6 +28,7 @@ TRADE_LOG_FILENAME = "trade_log.csv"
 PORTFOLIO_SNAPSHOT_FILENAME = "daily_portfolio_snapshots.csv"
 POSITION_SNAPSHOT_FILENAME = "daily_position_snapshots.csv"
 BENCHMARK_EQUITY_FILENAME = "benchmark_equity_curve.csv"
+BACKTEST_METRICS_FILENAME = METRICS_FILENAME
 
 TRADE_LOG_COLUMNS = [
     "order_id",
@@ -694,6 +696,7 @@ class DailySimulator:
         if not trade_history.empty:
             trade_history = trade_history.sort_values(
                 ["date", "symbol", "side"]
+
             ).reset_index(drop=True)
 
         if not signal_history.empty:
@@ -719,10 +722,19 @@ class DailySimulator:
         portfolio_snapshots_path = BACKTEST_OUTPUTS_DIR / PORTFOLIO_SNAPSHOT_FILENAME
         position_snapshots_path = BACKTEST_OUTPUTS_DIR / POSITION_SNAPSHOT_FILENAME
         benchmark_curve_path = BACKTEST_OUTPUTS_DIR / str(benchmark_output_filename or BENCHMARK_EQUITY_FILENAME)
+        metrics_path = BACKTEST_OUTPUTS_DIR / BACKTEST_METRICS_FILENAME
+
         trade_log.to_csv(trade_log_path, index=False)
         PortfolioSnapshotWriter.write_csv(portfolio_snapshots, portfolio_snapshots_path)
         PositionSnapshotWriter.write_csv(position_snapshots, position_snapshots_path)
         BenchmarkComparator.write_csv(benchmark_curve, benchmark_curve_path)
+
+        backtest_metrics = compute_backtest_metrics(
+            strategy_equity_curve=portfolio_snapshots,
+            benchmark_equity_curve=benchmark_curve,
+            trade_history=trade_history,
+        )
+        write_metrics_json(backtest_metrics, metrics_path)
 
         return {
             "portfolio_history": portfolio_history,
@@ -737,6 +749,8 @@ class DailySimulator:
             "portfolio_snapshots_path": portfolio_snapshots_path,
             "position_snapshots_path": position_snapshots_path,
             "benchmark_curve_path": benchmark_curve_path,
+            "backtest_metrics": backtest_metrics,
+            "backtest_metrics_path": metrics_path,
         }
 
 
