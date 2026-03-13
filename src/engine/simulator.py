@@ -22,6 +22,28 @@ from src.strategy.base import BaseStrategy, StrategySignal
 REPO_ROOT = Path(__file__).resolve().parents[2]
 PROCESSED_DATA_DIR = REPO_ROOT / "data" / "processed"
 FEATURES_FILE = PROCESSED_DATA_DIR / "market_features.parquet"
+BACKTEST_OUTPUTS_DIR = REPO_ROOT / "outputs" / "backtests"
+TRADE_LOG_FILENAME = "trade_log.csv"
+
+TRADE_LOG_COLUMNS = [
+    "order_id",
+    "decision_date",
+    "execution_date",
+    "symbol",
+    "side",
+    "quantity",
+    "price",
+    "fees",
+    "slippage",
+    "execution_status",
+    "reason",
+    "cash_before",
+    "cash_after",
+    "decision_price",
+    "execution_price",
+    "strategy_name",
+    "created_at",
+]
 
 
 class DailySimulator:
@@ -52,8 +74,10 @@ class DailySimulator:
         self._portfolio_history: list[dict[str, Any]] = []
         self._positions_history: list[dict[str, Any]] = []
         self._trade_history: list[dict[str, Any]] = []
+        self._trade_log_history: list[dict[str, Any]] = []
         self._signal_history: list[dict[str, Any]] = []
         self._pending_signals: dict[pd.Timestamp, list[StrategySignal]] = {}
+        self._order_sequence: int = 0
 
         max_open_positions = int(getattr(strategy, "max_open_positions", 1) or 1)
         max_position_size = getattr(strategy, "max_position_size", None)
@@ -184,6 +208,20 @@ class DailySimulator:
         )
 
     @staticmethod
+    def _format_datetime(value: Any) -> str | None:
+        if value is None or pd.isna(value):
+            return None
+        return pd.Timestamp(value).isoformat()
+
+    def _next_order_id(self) -> str:
+        self._order_sequence += 1
+        return f"ORD-{self._order_sequence:08d}"
+
+    def _record_trade_log(self, row: dict[str, Any]) -> None:
+        normalized = {col: row.get(col) for col in TRADE_LOG_COLUMNS}
+        self._trade_log_history.append(normalized)
+
+    @staticmethod
     def _sort_signals(signals: list[StrategySignal]) -> list[StrategySignal]:
         action_priority = {"SELL": 0, "BUY": 1, "HOLD": 2}
         return sorted(
@@ -206,10 +244,53 @@ class DailySimulator:
             symbol = str(order.get("symbol", "")).upper()
             quantity = float(order.get("quantity", 0.0) or 0.0)
             market_price = order.get("market_price")
+            order_id = self._next_order_id()
 
             if not symbol or side not in {"BUY", "SELL"}:
+                self._record_trade_log(
+                    {
+                        "order_id": order_id,
+                        "decision_date": self._format_datetime(decision_date),
+                        "execution_date": self._format_datetime(execution_date),
+                        "symbol": symbol,
+                        "side": side,
+                        "quantity": quantity,
+                        "price": None,
+                        "fees": 0.0,
+                        "slippage": 0.0,
+                        "execution_status": "SKIPPED_INVALID_ORDER",
+                        "reason": "Order has invalid side or symbol.",
+                        "cash_before": float(self.portfolio.cash),
+                        "cash_after": float(self.portfolio.cash),
+                        "decision_price": market_price,
+                        "execution_price": None,
+                        "strategy_name": self.strategy.__class__.__name__,
+                        "created_at": self._format_datetime(execution_date),
+                    }
+                )
                 continue
             if quantity <= 0 or market_price is None or float(market_price) <= 0:
+                self._record_trade_log(
+                    {
+                        "order_id": order_id,
+                        "decision_date": self._format_datetime(decision_date),
+                        "execution_date": self._format_datetime(execution_date),
+                        "symbol": symbol,
+                        "side": side,
+                        "quantity": quantity,
+                        "price": None,
+                        "fees": 0.0,
+                        "slippage": 0.0,
+                        "execution_status": "SKIPPED_INVALID_ORDER",
+                        "reason": "Order has invalid quantity or market price.",
+                        "cash_before": float(self.portfolio.cash),
+                        "cash_after": float(self.portfolio.cash),
+                        "decision_price": market_price,
+                        "execution_price": None,
+                        "strategy_name": self.strategy.__class__.__name__,
+                        "created_at": self._format_datetime(execution_date),
+                    }
+                )
                 continue
 
             if side == "SELL":
@@ -232,6 +313,29 @@ class DailySimulator:
             row["decision_date"] = pd.Timestamp(decision_date)
             row["execution_date"] = execution_date
             self._trade_history.append(row)
+            self._record_trade_log(
+                {
+                    "order_id": order_id,
+                    "decision_date": self._format_datetime(decision_date),
+                    "execution_date": self._format_datetime(execution_date),
+                    "symbol": symbol,
+                    "side": side,
+                    "quantity": float(row.get("requested_quantity", 0.0) or 0.0),
+                    "price": row.get("execution_price")
+                    if row.get("execution_price") is not None
+                    else row.get("requested_price"),
+                    "fees": float(row.get("fee", 0.0) or 0.0),
+                    "slippage": float(row.get("slippage_cost", 0.0) or 0.0),
+                    "execution_status": "EXECUTED" if bool(row.get("success")) else "REJECTED",
+                    "reason": row.get("message", ""),
+                    "cash_before": float(row.get("cash_before", 0.0) or 0.0),
+                    "cash_after": float(row.get("cash_after", 0.0) or 0.0),
+                    "decision_price": row.get("requested_price"),
+                    "execution_price": row.get("execution_price"),
+                    "strategy_name": self.strategy.__class__.__name__,
+                    "created_at": self._format_datetime(execution_date),
+                }
+            )
 
     @staticmethod
     def _next_trading_date_map(
@@ -256,6 +360,31 @@ class DailySimulator:
                 scheduled_execution_date=None,
                 schedule_status="NO_NEXT_TRADING_SESSION",
             )
+            for signal in signals:
+                side = str(signal.action).upper()
+                if side not in {"BUY", "SELL"}:
+                    continue
+                self._record_trade_log(
+                    {
+                        "order_id": self._next_order_id(),
+                        "decision_date": self._format_datetime(signal.date),
+                        "execution_date": None,
+                        "symbol": str(signal.symbol).upper(),
+                        "side": side,
+                        "quantity": None,
+                        "price": None,
+                        "fees": 0.0,
+                        "slippage": 0.0,
+                        "execution_status": "SKIPPED_NO_NEXT_SESSION",
+                        "reason": str(signal.reason_code or "No next trading session available."),
+                        "cash_before": float(self.portfolio.cash),
+                        "cash_after": float(self.portfolio.cash),
+                        "decision_price": None,
+                        "execution_price": None,
+                        "strategy_name": self.strategy.__class__.__name__,
+                        "created_at": self._format_datetime(signal.date),
+                    }
+                )
             return
 
         self._record_signals(
@@ -324,7 +453,9 @@ class DailySimulator:
         self._portfolio_history.clear()
         self._positions_history.clear()
         self._trade_history.clear()
+        self._trade_log_history.clear()
         self._signal_history.clear()
+        self._order_sequence = 0
 
         trading_dates = self._selected_trading_dates(
             start_date=start_date,
@@ -345,6 +476,7 @@ class DailySimulator:
         positions_history = pd.DataFrame(self._positions_history)
         trade_history = pd.DataFrame(self._trade_history)
         signal_history = pd.DataFrame(self._signal_history)
+        trade_log = pd.DataFrame(self._trade_log_history, columns=TRADE_LOG_COLUMNS)
 
         if not portfolio_history.empty:
             portfolio_history = portfolio_history.sort_values("date").reset_index(drop=True)
@@ -364,11 +496,22 @@ class DailySimulator:
                 ["date", "symbol", "action"]
             ).reset_index(drop=True)
 
+        if not trade_log.empty:
+            trade_log = trade_log.sort_values(
+                ["decision_date", "symbol", "side", "order_id"]
+            ).reset_index(drop=True)
+
+        BACKTEST_OUTPUTS_DIR.mkdir(parents=True, exist_ok=True)
+        trade_log_path = BACKTEST_OUTPUTS_DIR / TRADE_LOG_FILENAME
+        trade_log.to_csv(trade_log_path, index=False)
+
         return {
             "portfolio_history": portfolio_history,
             "positions_history": positions_history,
             "trade_history": trade_history,
             "signal_history": signal_history,
+            "trade_log": trade_log,
+            "trade_log_path": trade_log_path,
         }
 
 
