@@ -26,6 +26,7 @@ BACKTEST_OUTPUTS_DIR = REPO_ROOT / "outputs" / "backtests"
 TRADE_LOG_FILENAME = "trade_log.csv"
 PORTFOLIO_SNAPSHOT_FILENAME = "daily_portfolio_snapshots.csv"
 POSITION_SNAPSHOT_FILENAME = "daily_position_snapshots.csv"
+BENCHMARK_EQUITY_FILENAME = "benchmark_equity_curve.csv"
 
 TRADE_LOG_COLUMNS = [
     "order_id",
@@ -67,6 +68,15 @@ POSITION_SNAPSHOT_COLUMNS = [
     "unrealized_pnl",
     "position_weight",
     "portfolio_total_equity",
+]
+
+BENCHMARK_EQUITY_COLUMNS = [
+    "date",
+    "benchmark_symbol",
+    "benchmark_price",
+    "benchmark_return",
+    "benchmark_equity",
+    "cumulative_return",
 ]
 
 
@@ -154,6 +164,82 @@ class PositionSnapshotWriter:
     def write_csv(snapshots: pd.DataFrame, output_path: Path) -> Path:
         output_path.parent.mkdir(parents=True, exist_ok=True)
         snapshots.to_csv(output_path, index=False)
+        return output_path
+
+
+class BenchmarkComparator:
+    @staticmethod
+    def build_benchmark_curve(
+        market_data: pd.DataFrame,
+        portfolio_snapshots: pd.DataFrame,
+        benchmark_symbol: str,
+        initial_capital: float,
+        price_column: str,
+    ) -> pd.DataFrame:
+        canonical_dates = pd.DataFrame({
+            "date": pd.to_datetime(portfolio_snapshots.get("date", pd.Series(dtype="datetime64[ns]"))).dt.normalize()
+        })
+        canonical_dates = canonical_dates.dropna().drop_duplicates(subset=["date"]).sort_values("date")
+
+        if canonical_dates.empty:
+            return pd.DataFrame(columns=BENCHMARK_EQUITY_COLUMNS)
+
+        symbol = str(benchmark_symbol or "").strip().upper()
+        if not symbol:
+            curve = canonical_dates.copy()
+            curve["benchmark_symbol"] = ""
+            curve["benchmark_price"] = pd.NA
+            curve["benchmark_return"] = 0.0
+            curve["benchmark_equity"] = float(initial_capital)
+            curve["cumulative_return"] = 0.0
+            return curve[BENCHMARK_EQUITY_COLUMNS]
+
+        benchmark_prices = market_data.loc[
+            market_data["symbol"].astype(str).str.upper().str.strip() == symbol,
+            ["date", price_column],
+        ].copy()
+
+        if benchmark_prices.empty:
+            curve = canonical_dates.copy()
+            curve["benchmark_symbol"] = symbol
+            curve["benchmark_price"] = pd.NA
+            curve["benchmark_return"] = 0.0
+            curve["benchmark_equity"] = float(initial_capital)
+            curve["cumulative_return"] = 0.0
+            return curve[BENCHMARK_EQUITY_COLUMNS]
+
+        benchmark_prices["date"] = pd.to_datetime(benchmark_prices["date"]).dt.normalize()
+        benchmark_prices[price_column] = pd.to_numeric(benchmark_prices[price_column], errors="coerce")
+        benchmark_prices = benchmark_prices.drop_duplicates(subset=["date"], keep="last")
+        benchmark_prices = benchmark_prices.rename(columns={price_column: "benchmark_price"})
+
+        curve = canonical_dates.merge(benchmark_prices, on="date", how="left").sort_values("date")
+        curve["benchmark_symbol"] = symbol
+        curve["benchmark_price"] = curve["benchmark_price"].ffill().bfill()
+
+        if curve["benchmark_price"].isna().all():
+            curve["benchmark_return"] = 0.0
+            curve["benchmark_equity"] = float(initial_capital)
+            curve["cumulative_return"] = 0.0
+            return curve[BENCHMARK_EQUITY_COLUMNS]
+
+        curve["benchmark_return"] = curve["benchmark_price"].pct_change().fillna(0.0)
+        curve["benchmark_return"] = curve["benchmark_return"].replace([pd.NA, float("inf"), float("-inf")], 0.0).fillna(0.0)
+
+        starting_capital = float(initial_capital)
+        curve["benchmark_equity"] = starting_capital * (1.0 + curve["benchmark_return"]).cumprod()
+
+        if starting_capital == 0.0:
+            curve["cumulative_return"] = 0.0
+        else:
+            curve["cumulative_return"] = curve["benchmark_equity"] / starting_capital - 1.0
+
+        return curve[BENCHMARK_EQUITY_COLUMNS]
+
+    @staticmethod
+    def write_csv(curve: pd.DataFrame, output_path: Path) -> Path:
+        output_path.parent.mkdir(parents=True, exist_ok=True)
+        curve.to_csv(output_path, index=False)
         return output_path
 
 
@@ -560,6 +646,8 @@ class DailySimulator:
         self,
         start_date: str | pd.Timestamp | None = None,
         end_date: str | pd.Timestamp | None = None,
+        benchmark_symbol: str = "",
+        benchmark_output_filename: str = BENCHMARK_EQUITY_FILENAME,
     ) -> dict[str, pd.DataFrame]:
         self._portfolio_history.clear()
         self._positions_history.clear()
@@ -618,13 +706,23 @@ class DailySimulator:
                 ["decision_date", "symbol", "side", "order_id"]
             ).reset_index(drop=True)
 
+        benchmark_curve = BenchmarkComparator.build_benchmark_curve(
+            market_data=self.market_data,
+            portfolio_snapshots=portfolio_snapshots,
+            benchmark_symbol=benchmark_symbol,
+            initial_capital=float(getattr(self.portfolio, "initial_cash", 0.0)),
+            price_column=self.price_column,
+        )
+
         BACKTEST_OUTPUTS_DIR.mkdir(parents=True, exist_ok=True)
         trade_log_path = BACKTEST_OUTPUTS_DIR / TRADE_LOG_FILENAME
         portfolio_snapshots_path = BACKTEST_OUTPUTS_DIR / PORTFOLIO_SNAPSHOT_FILENAME
         position_snapshots_path = BACKTEST_OUTPUTS_DIR / POSITION_SNAPSHOT_FILENAME
+        benchmark_curve_path = BACKTEST_OUTPUTS_DIR / str(benchmark_output_filename or BENCHMARK_EQUITY_FILENAME)
         trade_log.to_csv(trade_log_path, index=False)
         PortfolioSnapshotWriter.write_csv(portfolio_snapshots, portfolio_snapshots_path)
         PositionSnapshotWriter.write_csv(position_snapshots, position_snapshots_path)
+        BenchmarkComparator.write_csv(benchmark_curve, benchmark_curve_path)
 
         return {
             "portfolio_history": portfolio_history,
@@ -634,9 +732,11 @@ class DailySimulator:
             "trade_history": trade_history,
             "signal_history": signal_history,
             "trade_log": trade_log,
+            "benchmark_curve": benchmark_curve,
             "trade_log_path": trade_log_path,
             "portfolio_snapshots_path": portfolio_snapshots_path,
             "position_snapshots_path": position_snapshots_path,
+            "benchmark_curve_path": benchmark_curve_path,
         }
 
 

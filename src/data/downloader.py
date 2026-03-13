@@ -54,8 +54,12 @@ def load_universe() -> list[str]:
 
 def get_all_symbols(settings: dict[str, Any], universe_symbols: list[str]) -> list[str]:
     """Return universe symbols plus benchmark if it is not already included."""
-    benchmark_symbol = (
-        settings.get("benchmark", {}).get("symbol", "") or ""
+    benchmark_cfg = settings.get("benchmark", {})
+    benchmark_symbol = str(
+        benchmark_cfg.get("benchmark_symbol")
+        or benchmark_cfg.get("symbol")
+        or settings.get("benchmark_symbol")
+        or ""
     ).strip().upper()
 
     symbols = list(universe_symbols)
