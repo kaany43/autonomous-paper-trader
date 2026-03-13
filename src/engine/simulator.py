@@ -25,6 +25,7 @@ FEATURES_FILE = PROCESSED_DATA_DIR / "market_features.parquet"
 BACKTEST_OUTPUTS_DIR = REPO_ROOT / "outputs" / "backtests"
 TRADE_LOG_FILENAME = "trade_log.csv"
 PORTFOLIO_SNAPSHOT_FILENAME = "daily_portfolio_snapshots.csv"
+POSITION_SNAPSHOT_FILENAME = "daily_position_snapshots.csv"
 
 TRADE_LOG_COLUMNS = [
     "order_id",
@@ -54,6 +55,18 @@ PORTFOLIO_SNAPSHOT_COLUMNS = [
     "realized_pnl",
     "unrealized_pnl",
     "open_positions",
+]
+
+POSITION_SNAPSHOT_COLUMNS = [
+    "date",
+    "symbol",
+    "quantity",
+    "average_cost",
+    "latest_price",
+    "market_value",
+    "unrealized_pnl",
+    "position_weight",
+    "portfolio_total_equity",
 ]
 
 
@@ -86,6 +99,55 @@ class PortfolioSnapshotWriter:
             snapshots[column] = pd.to_numeric(snapshots[column], errors="coerce")
 
         snapshots = snapshots.reset_index(drop=True)
+        return snapshots
+
+    @staticmethod
+    def write_csv(snapshots: pd.DataFrame, output_path: Path) -> Path:
+        output_path.parent.mkdir(parents=True, exist_ok=True)
+        snapshots.to_csv(output_path, index=False)
+        return output_path
+
+
+class PositionSnapshotWriter:
+    @staticmethod
+    def from_positions_history(
+        positions_history: pd.DataFrame,
+        portfolio_snapshots: pd.DataFrame,
+    ) -> pd.DataFrame:
+        if positions_history.empty:
+            return pd.DataFrame(columns=POSITION_SNAPSHOT_COLUMNS)
+
+        snapshots = positions_history.copy()
+        snapshots["date"] = pd.to_datetime(snapshots["date"]).dt.normalize()
+        snapshots = snapshots.rename(
+            columns={
+                "avg_cost": "average_cost",
+                "last_price": "latest_price",
+            }
+        )
+
+        equity = portfolio_snapshots[["date", "total_equity"]].rename(
+            columns={"total_equity": "portfolio_total_equity"}
+        )
+        equity["date"] = pd.to_datetime(equity["date"]).dt.normalize()
+
+        snapshots = snapshots.merge(equity, on="date", how="left")
+        snapshots = snapshots.sort_values(["date", "symbol"]).reset_index(drop=True)
+
+        for column in [
+            "quantity",
+            "average_cost",
+            "latest_price",
+            "market_value",
+            "unrealized_pnl",
+            "portfolio_total_equity",
+        ]:
+            snapshots[column] = pd.to_numeric(snapshots[column], errors="coerce")
+
+        snapshots["position_weight"] = snapshots["market_value"] / snapshots["portfolio_total_equity"]
+        snapshots.loc[snapshots["portfolio_total_equity"] == 0.0, "position_weight"] = 0.0
+
+        snapshots = snapshots[POSITION_SNAPSHOT_COLUMNS]
         return snapshots
 
     @staticmethod
@@ -531,6 +593,10 @@ class DailySimulator:
             portfolio_history = portfolio_history.sort_values("date").reset_index(drop=True)
 
         portfolio_snapshots = PortfolioSnapshotWriter.from_portfolio_history(portfolio_history)
+        position_snapshots = PositionSnapshotWriter.from_positions_history(
+            positions_history=positions_history,
+            portfolio_snapshots=portfolio_snapshots,
+        )
 
         if not positions_history.empty:
             positions_history = positions_history.sort_values(
@@ -555,18 +621,22 @@ class DailySimulator:
         BACKTEST_OUTPUTS_DIR.mkdir(parents=True, exist_ok=True)
         trade_log_path = BACKTEST_OUTPUTS_DIR / TRADE_LOG_FILENAME
         portfolio_snapshots_path = BACKTEST_OUTPUTS_DIR / PORTFOLIO_SNAPSHOT_FILENAME
+        position_snapshots_path = BACKTEST_OUTPUTS_DIR / POSITION_SNAPSHOT_FILENAME
         trade_log.to_csv(trade_log_path, index=False)
         PortfolioSnapshotWriter.write_csv(portfolio_snapshots, portfolio_snapshots_path)
+        PositionSnapshotWriter.write_csv(position_snapshots, position_snapshots_path)
 
         return {
             "portfolio_history": portfolio_history,
             "portfolio_snapshots": portfolio_snapshots,
+            "position_snapshots": position_snapshots,
             "positions_history": positions_history,
             "trade_history": trade_history,
             "signal_history": signal_history,
             "trade_log": trade_log,
             "trade_log_path": trade_log_path,
             "portfolio_snapshots_path": portfolio_snapshots_path,
+            "position_snapshots_path": position_snapshots_path,
         }
 
 
