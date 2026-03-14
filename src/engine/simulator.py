@@ -16,6 +16,7 @@ from src.engine.broker import Broker
 from src.engine.portfolio import Portfolio
 from src.engine.order_builder import OrderBuilder
 from src.engine.metrics import METRICS_FILENAME, compute_backtest_metrics, write_metrics_json
+from src.engine.run_artifacts import RunArtifactManager
 from src.strategy.momentum import MomentumStrategy
 from src.strategy.base import BaseStrategy, StrategySignal
 
@@ -625,6 +626,7 @@ class DailySimulator:
 
         historical_data = self._history_until(trading_date)
 
+
         signals = self.strategy.generate_signals(
             decision_date=trading_date,
             market_data=historical_data,
@@ -650,6 +652,8 @@ class DailySimulator:
         end_date: str | pd.Timestamp | None = None,
         benchmark_symbol: str = "",
         benchmark_output_filename: str = BENCHMARK_EQUITY_FILENAME,
+        run_config: dict[str, Any] | None = None,
+        config_source: str = "",
     ) -> dict[str, pd.DataFrame]:
         self._portfolio_history.clear()
         self._positions_history.clear()
@@ -665,76 +669,123 @@ class DailySimulator:
 
         if not trading_dates:
             raise ValueError("No trading dates found for the requested range.")
-        
-        next_date_map = self._next_trading_date_map(trading_dates)
 
-        for trading_date in trading_dates:
-            self._process_day(
-                trading_date=trading_date,
-                next_execution_date=next_date_map.get(trading_date),
-            )
-        portfolio_history = pd.DataFrame(self._portfolio_history)
-        positions_history = pd.DataFrame(self._positions_history)
-        trade_history = pd.DataFrame(self._trade_history)
-        signal_history = pd.DataFrame(self._signal_history)
-        trade_log = pd.DataFrame(self._trade_log_history, columns=TRADE_LOG_COLUMNS)
-
-        if not portfolio_history.empty:
-            portfolio_history = portfolio_history.sort_values("date").reset_index(drop=True)
-
-        portfolio_snapshots = PortfolioSnapshotWriter.from_portfolio_history(portfolio_history)
-        position_snapshots = PositionSnapshotWriter.from_positions_history(
-            positions_history=positions_history,
-            portfolio_snapshots=portfolio_snapshots,
-        )
-
-        if not positions_history.empty:
-            positions_history = positions_history.sort_values(
-                ["date", "symbol"]
-            ).reset_index(drop=True)
-
-        if not trade_history.empty:
-            trade_history = trade_history.sort_values(
-                ["date", "symbol", "side"]
-
-            ).reset_index(drop=True)
-
-        if not signal_history.empty:
-            signal_history = signal_history.sort_values(
-                ["date", "symbol", "action"]
-            ).reset_index(drop=True)
-
-        if not trade_log.empty:
-            trade_log = trade_log.sort_values(
-                ["decision_date", "symbol", "side", "order_id"]
-            ).reset_index(drop=True)
-
-        benchmark_curve = BenchmarkComparator.build_benchmark_curve(
-            market_data=self.market_data,
-            portfolio_snapshots=portfolio_snapshots,
+        artifact_manager = RunArtifactManager(
+            base_output_dir=BACKTEST_OUTPUTS_DIR,
+            strategy_name=self.strategy.__class__.__name__,
             benchmark_symbol=benchmark_symbol,
-            initial_capital=float(getattr(self.portfolio, "initial_cash", 0.0)),
-            price_column=self.price_column,
+            start_date=self._format_datetime(trading_dates[0]),
+            end_date=self._format_datetime(trading_dates[-1]),
         )
 
-        BACKTEST_OUTPUTS_DIR.mkdir(parents=True, exist_ok=True)
-        trade_log_path = BACKTEST_OUTPUTS_DIR / TRADE_LOG_FILENAME
-        portfolio_snapshots_path = BACKTEST_OUTPUTS_DIR / PORTFOLIO_SNAPSHOT_FILENAME
-        position_snapshots_path = BACKTEST_OUTPUTS_DIR / POSITION_SNAPSHOT_FILENAME
-        benchmark_curve_path = BACKTEST_OUTPUTS_DIR / str(benchmark_output_filename or BENCHMARK_EQUITY_FILENAME)
-        metrics_path = BACKTEST_OUTPUTS_DIR / BACKTEST_METRICS_FILENAME
+        resolved_run_config = run_config or {
+            "strategy_name": self.strategy.__class__.__name__,
+            "strategy_parameters": dict(getattr(self.strategy, "__dict__", {})),
+            "broker": {
+                "commission_rate": float(getattr(self.broker, "commission_rate", 0.0) or 0.0),
+                "slippage_rate": float(getattr(self.broker, "slippage_rate", 0.0) or 0.0),
+                "fractional_shares": bool(getattr(self.broker, "fractional_shares", False)),
+            },
+            "portfolio": {
+                "initial_cash": float(getattr(self.portfolio, "initial_cash", 0.0) or 0.0),
+            },
+            "run": {
+                "start_date": self._format_datetime(trading_dates[0]),
+                "end_date": self._format_datetime(trading_dates[-1]),
+                "benchmark_symbol": str(benchmark_symbol or ""),
+                "price_column": self.price_column,
+            },
+        }
+        config_path = artifact_manager.write_config_snapshot(resolved_run_config)
 
-        trade_log.to_csv(trade_log_path, index=False)
-        PortfolioSnapshotWriter.write_csv(portfolio_snapshots, portfolio_snapshots_path)
-        PositionSnapshotWriter.write_csv(position_snapshots, position_snapshots_path)
-        BenchmarkComparator.write_csv(benchmark_curve, benchmark_curve_path)
+        try:
+            next_date_map = self._next_trading_date_map(trading_dates)
 
-        backtest_metrics = compute_backtest_metrics(
-            strategy_equity_curve=portfolio_snapshots,
-            benchmark_equity_curve=benchmark_curve,
-            trade_history=trade_history,
-        )
-        write_metrics_json(backtest_metrics, metrics_path)
+            for trading_date in trading_dates:
+                self._process_day(
+                    trading_date=trading_date,
+                    next_execution_date=next_date_map.get(trading_date),
+                )
+
+            portfolio_history = pd.DataFrame(self._portfolio_history)
+            positions_history = pd.DataFrame(self._positions_history)
+            trade_history = pd.DataFrame(self._trade_history)
+            signal_history = pd.DataFrame(self._signal_history)
+            trade_log = pd.DataFrame(self._trade_log_history, columns=TRADE_LOG_COLUMNS)
+
+            if not portfolio_history.empty:
+                portfolio_history = portfolio_history.sort_values("date").reset_index(drop=True)
+
+            portfolio_snapshots = PortfolioSnapshotWriter.from_portfolio_history(portfolio_history)
+            position_snapshots = PositionSnapshotWriter.from_positions_history(
+                positions_history=positions_history,
+                portfolio_snapshots=portfolio_snapshots,
+            )
+
+            if not positions_history.empty:
+                positions_history = positions_history.sort_values(
+                    ["date", "symbol"]
+                ).reset_index(drop=True)
+
+            if not trade_history.empty:
+                trade_history = trade_history.sort_values(
+                    ["date", "symbol", "side"]
+                ).reset_index(drop=True)
+
+            if not signal_history.empty:
+                signal_history = signal_history.sort_values(
+                    ["date", "symbol", "action"]
+                ).reset_index(drop=True)
+
+            if not trade_log.empty:
+                trade_log = trade_log.sort_values(
+                    ["decision_date", "symbol", "side", "order_id"]
+                ).reset_index(drop=True)
+
+            benchmark_curve = BenchmarkComparator.build_benchmark_curve(
+                market_data=self.market_data,
+                portfolio_snapshots=portfolio_snapshots,
+                benchmark_symbol=benchmark_symbol,
+                initial_capital=float(getattr(self.portfolio, "initial_cash", 0.0)),
+                price_column=self.price_column,
+            )
+
+            trade_log_path = artifact_manager.artifact_path(TRADE_LOG_FILENAME)
+            portfolio_snapshots_path = artifact_manager.artifact_path(PORTFOLIO_SNAPSHOT_FILENAME)
+            position_snapshots_path = artifact_manager.artifact_path(POSITION_SNAPSHOT_FILENAME)
+            benchmark_curve_path = artifact_manager.artifact_path(
+                str(benchmark_output_filename or BENCHMARK_EQUITY_FILENAME)
+            )
+            metrics_path = artifact_manager.artifact_path(BACKTEST_METRICS_FILENAME)
+
+            trade_log.to_csv(trade_log_path, index=False)
+            artifact_manager.register_artifact("trade_log", trade_log_path)
+            PortfolioSnapshotWriter.write_csv(portfolio_snapshots, portfolio_snapshots_path)
+            artifact_manager.register_artifact("portfolio_snapshots", portfolio_snapshots_path)
+            PositionSnapshotWriter.write_csv(position_snapshots, position_snapshots_path)
+            artifact_manager.register_artifact("position_snapshots", position_snapshots_path)
+            BenchmarkComparator.write_csv(benchmark_curve, benchmark_curve_path)
+            artifact_manager.register_artifact("benchmark_curve", benchmark_curve_path)
+
+            backtest_metrics = compute_backtest_metrics(
+                strategy_equity_curve=portfolio_snapshots,
+                benchmark_equity_curve=benchmark_curve,
+                trade_history=trade_history,
+            )
+            write_metrics_json(backtest_metrics, metrics_path)
+            artifact_manager.register_artifact("backtest_metrics", metrics_path)
+
+            manifest_path = artifact_manager.write_manifest(
+                status="completed",
+                config_source=config_source,
+            )
+        except Exception as exc:
+            artifact_manager.write_manifest(
+                status="failed",
+                config_source=config_source,
+                error_message=str(exc),
+            )
+            raise
 
         return {
             "portfolio_history": portfolio_history,
@@ -751,6 +802,10 @@ class DailySimulator:
             "benchmark_curve_path": benchmark_curve_path,
             "backtest_metrics": backtest_metrics,
             "backtest_metrics_path": metrics_path,
+            "run_id": artifact_manager.run_id,
+            "output_dir": artifact_manager.output_dir,
+            "config_path": config_path,
+            "manifest_path": manifest_path,
         }
 
 
