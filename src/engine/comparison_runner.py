@@ -274,6 +274,15 @@ def run_m3_comparison(
     portfolio_snapshots = pd.read_csv(ref_output_dir / "daily_portfolio_snapshots.csv")
     trade_history = pd.DataFrame()
     initial_capital = float(settings.get("portfolio", {}).get("initial_cash", 0.0))
+    benchmark_curve_for_metrics = pd.DataFrame(columns=["date", "benchmark_equity"])
+    if benchmark_symbol:
+        benchmark_curve_for_metrics = BenchmarkComparator.build_benchmark_curve(
+            market_data=features_df,
+            portfolio_snapshots=portfolio_snapshots,
+            benchmark_symbol=benchmark_symbol,
+            initial_capital=initial_capital,
+            price_column="adj_close",
+        )
 
     if run_buy_and_hold:
         comparator = BenchmarkComparator.build_benchmark_curve(
@@ -344,7 +353,7 @@ def run_m3_comparison(
         manager.register_artifact("equal_weight_curve", curve_path)
         metrics = compute_backtest_metrics(
             strategy_equity_curve=_build_portfolio_curve_from_column(comparator, "equal_weight_equity"),
-            benchmark_equity_curve=pd.DataFrame(columns=["date", "benchmark_equity"]),
+            benchmark_equity_curve=benchmark_curve_for_metrics,
             trade_history=trade_history,
         )
         metrics_path = manager.artifact_path("backtest_metrics.json")

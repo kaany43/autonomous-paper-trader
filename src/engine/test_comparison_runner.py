@@ -129,6 +129,18 @@ baselines:
         second_metrics = json.loads(Path(second["runs"][0]["metrics_path"]).read_text(encoding="utf-8"))
         self.assertEqual(first_metrics, second_metrics)
 
+
+    def test_equal_weight_uses_benchmark_curve_for_metrics(self) -> None:
+        self._write_config()
+        result = run_m3_comparison(config_path=self.config_path, output_root=self.output_dir)
+
+        runs_by_name = {item["name"]: item for item in result["runs"]}
+        equal_weight_metrics = json.loads(Path(runs_by_name["equal_weight"]["metrics_path"]).read_text(encoding="utf-8"))
+        buy_hold_metrics = json.loads(Path(runs_by_name["buy_and_hold"]["metrics_path"]).read_text(encoding="utf-8"))
+
+        self.assertGreater(equal_weight_metrics["benchmark"]["cumulative_return"], 0.0)
+        self.assertEqual(equal_weight_metrics["benchmark"], buy_hold_metrics["benchmark"])
+
     def test_missing_required_baseline_components_fail_clearly(self) -> None:
         self._write_config(benchmark_symbol="")
         with self.assertRaisesRegex(ValueError, "Buy-and-hold baseline requires benchmark"):
