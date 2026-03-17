@@ -12,6 +12,7 @@ import pandas as pd
 from src.data.features import add_basic_features
 from src.data.loader import get_benchmark_symbol, load_market_data, load_yaml
 from src.engine.broker import Broker
+from src.engine.comparison_metrics import write_comparison_metrics
 from src.engine.metrics import compute_backtest_metrics, write_metrics_json
 from src.engine.portfolio import Portfolio
 from src.engine.run_artifacts import RunArtifactManager
@@ -375,11 +376,20 @@ def run_m3_comparison(
         )
 
     run_records = sorted(run_records, key=lambda item: item["name"])
+    comparison_metrics_paths = write_comparison_metrics(
+        comparison_dir=comparison_dir,
+        comparison_run_id=comparison_run_id,
+        created_at=created_at,
+        runs=run_records,
+    )
+
     manifest_payload = {
         "comparison_run_id": comparison_run_id,
         "created_at": created_at,
         "status": "completed",
         "config_snapshot_path": str(comparison_config_path),
+        "comparison_metrics_json_path": str(comparison_metrics_paths["json_path"]),
+        "comparison_metrics_csv_path": str(comparison_metrics_paths["csv_path"]),
         "runs": run_records,
         "compared_strategies": [item["name"] for item in run_records],
     }
@@ -392,6 +402,8 @@ def run_m3_comparison(
         "runs_dir": runs_dir,
         "comparison_manifest_path": manifest_path,
         "comparison_config_path": comparison_config_path,
+        "comparison_metrics_json_path": comparison_metrics_paths["json_path"],
+        "comparison_metrics_csv_path": comparison_metrics_paths["csv_path"],
         "runs": run_records,
     }
 
