@@ -17,6 +17,7 @@ from src.engine.simulator import (
 COMPARISON_METRICS_JSON_FILENAME = "comparison_metrics.json"
 COMPARISON_METRICS_CSV_FILENAME = "comparison_metrics.csv"
 NOT_APPLICABLE = "not_applicable"
+_EXECUTED_STATUSES = {"filled", "executed"}
 
 
 def _load_csv_if_exists(path: Path) -> pd.DataFrame:
@@ -51,7 +52,8 @@ def _compute_activity_metrics(run: dict[str, Any]) -> dict[str, Any]:
 
     trades = trade_log.copy()
     if "execution_status" in trades.columns:
-        trades = trades.loc[trades["execution_status"].astype(str).str.lower() == "filled"]
+        normalized_status = trades["execution_status"].astype(str).str.lower()
+        trades = trades.loc[normalized_status.isin(_EXECUTED_STATUSES)]
 
     if "quantity" in trades.columns:
         qty = pd.to_numeric(trades["quantity"], errors="coerce").abs().fillna(0.0)
