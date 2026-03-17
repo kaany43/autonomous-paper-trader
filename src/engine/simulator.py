@@ -750,6 +750,7 @@ class DailySimulator:
         equal_weight_output_filename: str = EQUAL_WEIGHT_EQUITY_FILENAME,
         run_config: dict[str, Any] | None = None,
         config_source: str = "",
+        run_label: str = "",
     ) -> dict[str, pd.DataFrame]:
         self._portfolio_history.clear()
         self._positions_history.clear()
@@ -765,6 +766,10 @@ class DailySimulator:
 
         if not trading_dates:
             raise ValueError("No trading dates found for the requested range.")
+        
+        variant_name = ""
+        if isinstance(run_config, dict):
+            variant_name = str((run_config.get("strategy_variant") or {}).get("name") or "")
 
         artifact_manager = RunArtifactManager(
             base_output_dir=BACKTEST_OUTPUTS_DIR,
@@ -772,6 +777,8 @@ class DailySimulator:
             benchmark_symbol=benchmark_symbol,
             start_date=self._format_datetime(trading_dates[0]),
             end_date=self._format_datetime(trading_dates[-1]),
+            run_label=run_label,
+            strategy_variant=variant_name,
         )
 
         resolved_run_config = run_config or {

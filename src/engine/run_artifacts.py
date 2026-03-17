@@ -20,6 +20,8 @@ class RunArtifactManager:
         benchmark_symbol: str = "",
         start_date: str = "",
         end_date: str = "",
+        run_label: str = "",
+        strategy_variant: str = "",
     ) -> None:
         self.base_output_dir = Path(base_output_dir)
         self.base_output_dir.mkdir(parents=True, exist_ok=True)
@@ -28,6 +30,8 @@ class RunArtifactManager:
         self.benchmark_symbol = str(benchmark_symbol or "")
         self.start_date = str(start_date or "")
         self.end_date = str(end_date or "")
+        self.run_label = str(run_label or "")
+        self.strategy_variant = str(strategy_variant or "")
 
         self.run_id = self._build_unique_run_id()
         self.output_dir = self.base_output_dir / self.run_id
@@ -38,11 +42,13 @@ class RunArtifactManager:
 
     def _build_unique_run_id(self) -> str:
         timestamp = datetime.now(timezone.utc).strftime("%Y%m%dT%H%M%SZ")
-        run_id = timestamp
+        label = self.run_label.strip()
+        run_id = f"{label}-{timestamp}" if label else timestamp
         suffix = 0
         while (self.base_output_dir / run_id).exists():
             suffix += 1
-            run_id = f"{timestamp}-{suffix:02d}"
+            base = f"{label}-{timestamp}" if label else timestamp
+            run_id = f"{base}-{suffix:02d}"
         return run_id
 
     @staticmethod
@@ -85,6 +91,7 @@ class RunArtifactManager:
             "created_at": self.created_at,
             "output_dir": str(self.output_dir),
             "strategy_name": self.strategy_name,
+            "strategy_variant": self.strategy_variant,
             "benchmark_symbol": self.benchmark_symbol,
             "start_date": self.start_date,
             "end_date": self.end_date,
