@@ -58,7 +58,6 @@ class MomentumStrategy(BaseStrategy):
             and row["ret_5d"] > 0
             and row["adj_close"] > row["ma_20"]
             and row["ma_20"] > row["ma_50"]
-            and row["volume_ratio_20"] > 0.8
             and row["volume_ratio_20"] > self.min_volume_ratio
         )
 
