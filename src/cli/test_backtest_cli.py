@@ -131,6 +131,42 @@ universe:
         self.assertEqual(err.getvalue(), "")
         self.assertIn("Window: 2024-01-03 -> 2024-01-04", out.getvalue())
 
+    def test_cli_supports_inline_universe_in_config(self) -> None:
+        inline_config = self.tmp_path / "config" / "m3_protocol.yaml"
+        inline_config.write_text(
+            """
+portfolio:
+  initial_cash: 1000.0
+  max_open_positions: 2
+  fractional_shares: true
+execution:
+  commission_rate: 0.001
+  slippage_rate: 0.001
+strategy:
+  top_k: 2
+benchmark:
+  benchmark_symbol: "SPY"
+data:
+  start_date: "2024-01-02"
+  end_date: "2024-01-05"
+universe:
+  symbols: ["AAA"]
+""".strip()
+            + "\n",
+            encoding="utf-8",
+        )
+
+        out = io.StringIO()
+        err = io.StringIO()
+
+        with redirect_stdout(out), redirect_stderr(err):
+            code = main(["--config", str(inline_config)])
+
+        self.assertEqual(code, 0)
+        self.assertEqual(err.getvalue(), "")
+        self.assertIn("Backtest completed", out.getvalue())
+
+
     def test_cli_invalid_date_returns_readable_error_and_nonzero(self) -> None:
         out = io.StringIO()
         err = io.StringIO()
