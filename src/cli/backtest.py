@@ -100,12 +100,18 @@ def run_backtest(
             "start_date": str(start_ts.date()) if start_ts is not None else None,
             "end_date": str(end_ts.date()) if end_ts is not None else None,
         },
+        "baselines": {
+            "benchmark_symbol": benchmark_symbol,
+            "equal_weight_universe": symbols,
+            "equal_weight_rebalance_frequency": "daily",
+        },
     }
 
     results = simulator.run(
         start_date=start_ts,
         end_date=end_ts,
         benchmark_symbol=benchmark_symbol,
+        equal_weight_universe=symbols,
         run_config=run_config,
         config_source=str(config_path),
     )

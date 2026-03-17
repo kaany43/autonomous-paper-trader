@@ -40,6 +40,7 @@ Each run must produce, at minimum:
 - `daily_portfolio_snapshots.csv`
 - `daily_position_snapshots.csv`
 - `benchmark_equity_curve.csv`
+- `equal_weight_equity_curve.csv`
 - `backtest_metrics.json`
 - `manifest.json`
 - `config.json`
