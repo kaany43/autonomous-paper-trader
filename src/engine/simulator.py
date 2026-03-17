@@ -29,6 +29,7 @@ TRADE_LOG_FILENAME = "trade_log.csv"
 PORTFOLIO_SNAPSHOT_FILENAME = "daily_portfolio_snapshots.csv"
 POSITION_SNAPSHOT_FILENAME = "daily_position_snapshots.csv"
 BENCHMARK_EQUITY_FILENAME = "benchmark_equity_curve.csv"
+EQUAL_WEIGHT_EQUITY_FILENAME = "equal_weight_equity_curve.csv"
 BACKTEST_METRICS_FILENAME = METRICS_FILENAME
 
 TRADE_LOG_COLUMNS = [
@@ -79,6 +80,15 @@ BENCHMARK_EQUITY_COLUMNS = [
     "benchmark_price",
     "benchmark_return",
     "benchmark_equity",
+    "cumulative_return",
+]
+
+EQUAL_WEIGHT_EQUITY_COLUMNS = [
+    "date",
+    "universe_size",
+    "priced_symbol_count",
+    "equal_weight_return",
+    "equal_weight_equity",
     "cumulative_return",
 ]
 
@@ -249,6 +259,79 @@ class BenchmarkComparator:
             curve["cumulative_return"] = curve["benchmark_equity"] / starting_capital - 1.0
 
         return curve[BENCHMARK_EQUITY_COLUMNS]
+
+    @staticmethod
+    def write_csv(curve: pd.DataFrame, output_path: Path) -> Path:
+        output_path.parent.mkdir(parents=True, exist_ok=True)
+        curve.to_csv(output_path, index=False)
+        return output_path
+
+
+class EqualWeightComparator:
+    @staticmethod
+    def build_equal_weight_curve(
+        market_data: pd.DataFrame,
+        portfolio_snapshots: pd.DataFrame,
+        universe_symbols: list[str],
+        initial_capital: float,
+        price_column: str,
+    ) -> pd.DataFrame:
+        canonical_dates = pd.DataFrame({
+            "date": pd.to_datetime(portfolio_snapshots.get("date", pd.Series(dtype="datetime64[ns]"))).dt.normalize()
+        })
+        canonical_dates = canonical_dates.dropna().drop_duplicates(subset=["date"]).sort_values("date")
+        if canonical_dates.empty:
+            return pd.DataFrame(columns=EQUAL_WEIGHT_EQUITY_COLUMNS)
+
+        symbols = sorted({str(symbol).strip().upper() for symbol in universe_symbols if str(symbol).strip()})
+
+        curve = canonical_dates.copy()
+        curve["universe_size"] = float(len(symbols))
+        curve["priced_symbol_count"] = 0.0
+        curve["equal_weight_return"] = 0.0
+        curve["equal_weight_equity"] = float(initial_capital)
+        curve["cumulative_return"] = 0.0
+
+        if not symbols:
+            return curve[EQUAL_WEIGHT_EQUITY_COLUMNS]
+
+        prices = market_data.loc[
+            market_data["symbol"].astype(str).str.upper().str.strip().isin(symbols),
+            ["date", "symbol", price_column],
+        ].copy()
+        if prices.empty:
+            return curve[EQUAL_WEIGHT_EQUITY_COLUMNS]
+
+        prices["date"] = pd.to_datetime(prices["date"]).dt.normalize()
+        prices["symbol"] = prices["symbol"].astype(str).str.upper().str.strip()
+        prices[price_column] = pd.to_numeric(prices[price_column], errors="coerce")
+        prices = prices.dropna(subset=[price_column])
+        if prices.empty:
+            return curve[EQUAL_WEIGHT_EQUITY_COLUMNS]
+
+        price_panel = (
+            prices.sort_values(["date", "symbol"])
+            .drop_duplicates(subset=["date", "symbol"], keep="last")
+            .pivot(index="date", columns="symbol", values=price_column)
+            .reindex(canonical_dates["date"])
+            .ffill()
+        )
+
+        returns_panel = price_panel.pct_change()
+        priced_symbol_count = returns_panel.notna().sum(axis=1).astype(float)
+        equal_weight_returns = returns_panel.mean(axis=1, skipna=True).fillna(0.0)
+
+        curve["priced_symbol_count"] = priced_symbol_count.to_numpy(dtype=float)
+        curve["equal_weight_return"] = equal_weight_returns.to_numpy(dtype=float)
+        curve["equal_weight_equity"] = float(initial_capital) * (1.0 + curve["equal_weight_return"]).cumprod()
+
+        starting_capital = float(initial_capital)
+        if starting_capital == 0.0:
+            curve["cumulative_return"] = 0.0
+        else:
+            curve["cumulative_return"] = curve["equal_weight_equity"] / starting_capital - 1.0
+
+        return curve[EQUAL_WEIGHT_EQUITY_COLUMNS]
 
     @staticmethod
     def write_csv(curve: pd.DataFrame, output_path: Path) -> Path:
@@ -662,7 +745,9 @@ class DailySimulator:
         start_date: str | pd.Timestamp | None = None,
         end_date: str | pd.Timestamp | None = None,
         benchmark_symbol: str = "",
+        equal_weight_universe: list[str] | None = None,
         benchmark_output_filename: str = BENCHMARK_EQUITY_FILENAME,
+        equal_weight_output_filename: str = EQUAL_WEIGHT_EQUITY_FILENAME,
         run_config: dict[str, Any] | None = None,
         config_source: str = "",
     ) -> dict[str, pd.DataFrame]:
@@ -760,12 +845,22 @@ class DailySimulator:
                 initial_capital=float(getattr(self.portfolio, "initial_cash", 0.0)),
                 price_column=self.price_column,
             )
+            equal_weight_curve = EqualWeightComparator.build_equal_weight_curve(
+                market_data=self.market_data,
+                portfolio_snapshots=portfolio_snapshots,
+                universe_symbols=equal_weight_universe or [],
+                initial_capital=float(getattr(self.portfolio, "initial_cash", 0.0)),
+                price_column=self.price_column,
+            )
 
             trade_log_path = artifact_manager.artifact_path(TRADE_LOG_FILENAME)
             portfolio_snapshots_path = artifact_manager.artifact_path(PORTFOLIO_SNAPSHOT_FILENAME)
             position_snapshots_path = artifact_manager.artifact_path(POSITION_SNAPSHOT_FILENAME)
             benchmark_curve_path = artifact_manager.artifact_path(
                 str(benchmark_output_filename or BENCHMARK_EQUITY_FILENAME)
+            )
+            equal_weight_curve_path = artifact_manager.artifact_path(
+                str(equal_weight_output_filename or EQUAL_WEIGHT_EQUITY_FILENAME)
             )
             metrics_path = artifact_manager.artifact_path(BACKTEST_METRICS_FILENAME)
 
@@ -777,6 +872,8 @@ class DailySimulator:
             artifact_manager.register_artifact("position_snapshots", position_snapshots_path)
             BenchmarkComparator.write_csv(benchmark_curve, benchmark_curve_path)
             artifact_manager.register_artifact("benchmark_curve", benchmark_curve_path)
+            EqualWeightComparator.write_csv(equal_weight_curve, equal_weight_curve_path)
+            artifact_manager.register_artifact("equal_weight_curve", equal_weight_curve_path)
 
             backtest_metrics = compute_backtest_metrics(
                 strategy_equity_curve=portfolio_snapshots,
@@ -807,10 +904,12 @@ class DailySimulator:
             "signal_history": signal_history,
             "trade_log": trade_log,
             "benchmark_curve": benchmark_curve,
+            "equal_weight_curve": equal_weight_curve,
             "trade_log_path": trade_log_path,
             "portfolio_snapshots_path": portfolio_snapshots_path,
             "position_snapshots_path": position_snapshots_path,
             "benchmark_curve_path": benchmark_curve_path,
+            "equal_weight_curve_path": equal_weight_curve_path,
             "backtest_metrics": backtest_metrics,
             "backtest_metrics_path": metrics_path,
             "run_id": artifact_manager.run_id,
