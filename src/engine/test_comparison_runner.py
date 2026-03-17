@@ -129,6 +129,10 @@ baselines:
         second_metrics = json.loads(Path(second["runs"][0]["metrics_path"]).read_text(encoding="utf-8"))
         self.assertEqual(first_metrics, second_metrics)
 
+        first_comparison_metrics = json.loads(first["comparison_metrics_json_path"].read_text(encoding="utf-8"))
+        second_comparison_metrics = json.loads(second["comparison_metrics_json_path"].read_text(encoding="utf-8"))
+        self.assertEqual(first_comparison_metrics["rows"], second_comparison_metrics["rows"])
+
 
     def test_equal_weight_uses_benchmark_curve_for_metrics(self) -> None:
         self._write_config()
@@ -145,6 +149,56 @@ baselines:
         self._write_config(benchmark_symbol="")
         with self.assertRaisesRegex(ValueError, "Buy-and-hold baseline requires benchmark"):
             run_m3_comparison(config_path=self.config_path, output_root=self.output_dir)
+
+    def test_shared_comparison_metrics_outputs_include_all_runs(self) -> None:
+        self._write_config()
+        result = run_m3_comparison(config_path=self.config_path, output_root=self.output_dir)
+
+        self.assertTrue(result["comparison_metrics_json_path"].exists())
+        self.assertTrue(result["comparison_metrics_csv_path"].exists())
+
+        payload = json.loads(result["comparison_metrics_json_path"].read_text(encoding="utf-8"))
+        rows = payload["rows"]
+        self.assertEqual([row["run_name"] for row in rows], sorted([row["run_name"] for row in rows]))
+        self.assertEqual(len(rows), len(result["runs"]))
+
+        by_name = {row["run_name"]: row for row in rows}
+        self.assertIn("momentum_baseline", by_name)
+        self.assertIn("buy_and_hold", by_name)
+        self.assertIn("equal_weight", by_name)
+
+        required_fields = {
+            "run_name",
+            "strategy_type",
+            "variant_name",
+            "cumulative_return",
+            "period_return",
+            "max_drawdown",
+            "volatility",
+            "average_daily_return",
+            "sharpe_ratio",
+            "return_over_max_drawdown",
+            "trade_count",
+            "win_rate",
+            "activity_metrics_status",
+        }
+        for row in rows:
+            self.assertTrue(required_fields.issubset(row.keys()))
+            self.assertEqual(row["period_return"], row["cumulative_return"])
+
+        self.assertIsNone(by_name["buy_and_hold"]["trade_count"])
+        self.assertIsNone(by_name["buy_and_hold"]["win_rate"])
+        self.assertEqual(by_name["buy_and_hold"]["activity_metrics_status"], "not_applicable")
+
+        self.assertIsNone(by_name["equal_weight"]["trade_count"])
+        self.assertIsNone(by_name["equal_weight"]["win_rate"])
+        self.assertEqual(by_name["equal_weight"]["activity_metrics_status"], "not_applicable")
+
+        momentum_activity = by_name["momentum_baseline"]["activity_metrics_status"]
+        self.assertIn(momentum_activity, {"computed", "missing_trade_log", "win_rate_unavailable"})
+
+        csv_df = pd.read_csv(result["comparison_metrics_csv_path"])
+        self.assertEqual(sorted(csv_df["run_name"].tolist()), sorted(by_name.keys()))
 
 
 if __name__ == "__main__":
