@@ -22,17 +22,22 @@ def _parse_date(value: str, flag_name: str) -> pd.Timestamp:
         raise ValueError(f"Invalid {flag_name} date format: {value!r}. Use YYYY-MM-DD.") from exc
 
 
-def _load_universe_symbols(settings_path: Path) -> list[str]:
-    universe_path = settings_path.parent / "universe.yaml"
-    data = load_yaml(universe_path)
-    symbols = data.get("universe", {}).get("symbols", [])
+def _load_universe_symbols(settings_path: Path, settings: dict[str, Any]) -> list[str]:
+    symbols = settings.get("universe", {}).get("symbols", [])
+    source = str(settings_path)
+
+    if not symbols:
+        universe_path = settings_path.parent / "universe.yaml"
+        data = load_yaml(universe_path)
+        symbols = data.get("universe", {}).get("symbols", [])
+        source = str(universe_path)
 
     if not isinstance(symbols, list) or not symbols:
-        raise ValueError(f"No symbols found in universe file: {universe_path}")
+        raise ValueError(f"No symbols found in universe config: {source}")
 
     cleaned = [str(s).strip().upper() for s in symbols if str(s).strip()]
     if not cleaned:
-        raise ValueError(f"Universe symbols are empty after cleaning: {universe_path}")
+        raise ValueError(f"Universe symbols are empty after cleaning: {source}")
 
     return cleaned
 
@@ -65,7 +70,7 @@ def run_backtest(
             f"Invalid date range: start date {start_ts.date()} is after end date {end_ts.date()}."
         )
 
-    symbols = _load_universe_symbols(config_path)
+    symbols = _load_universe_symbols(config_path, settings)
     market_df = load_market_data(symbols=symbols + ([benchmark_symbol] if benchmark_symbol and benchmark_symbol not in symbols else []))
     features_df = add_basic_features(market_df)
 

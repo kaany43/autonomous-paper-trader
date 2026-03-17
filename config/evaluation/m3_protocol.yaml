@@ -1,0 +1,85 @@
+protocol:
+  name: m3_official_evaluation
+  milestone: M3
+  version: 1
+  description: Official comparison contract for M3 strategy vs baseline evaluations.
+
+data:
+  source: yfinance
+  start_date: "2020-01-01"
+  end_date: "2024-12-31"
+  interval: "1d"
+  auto_adjust: false
+  actions: true
+
+universe:
+  name: m3_nasdaq_core_10
+  symbols:
+    - AAPL
+    - MSFT
+    - NVDA
+    - AMZN
+    - META
+    - TSLA
+    - AMD
+    - NFLX
+    - QCOM
+    - GOOGL
+
+benchmark:
+  benchmark_symbol: "QQQ"
+
+portfolio:
+  initial_cash: 10000.0
+  currency: "USD"
+  max_open_positions: 2
+  max_position_weight: 0.5
+  fractional_shares: true
+
+execution:
+  commission_rate: 0.001
+  slippage_rate: 0.001
+  execution_timing: "next_open"
+
+strategy:
+  name: momentum_v0
+  rebalance_frequency: "daily"
+  lookback_short: 20
+  lookback_long: 50
+  top_k: 2
+
+output:
+  save_trades_csv: true
+  save_portfolio_csv: true
+  save_positions_csv: true
+  save_metrics_json: true
+
+m3_requirements:
+  simulator_assumptions:
+    - Decisions are made with information available up to the decision date only.
+    - Orders are executed on the next tradable session.
+    - Portfolio constraints and position sizing must use configured limits.
+    - Strategy performance is compared against configured benchmark equity curve.
+    - Metrics and run artifacts are exported for every run.
+  required_outputs:
+    - trade_log.csv
+    - daily_portfolio_snapshots.csv
+    - daily_position_snapshots.csv
+    - benchmark_equity_curve.csv
+    - backtest_metrics.json
+    - manifest.json
+    - config.json
+  required_metrics:
+    strategy:
+      - cumulative_return
+      - max_drawdown
+      - volatility
+      - trade_count
+      - win_rate
+      - sharpe_ratio
+      - return_over_max_drawdown
+    benchmark:
+      - cumulative_return
+      - max_drawdown
+      - volatility
+      - sharpe_ratio
