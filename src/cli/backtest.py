@@ -15,6 +15,9 @@ from src.engine.simulator import DailySimulator
 from src.strategy.momentum import MomentumStrategy
 
 
+MAX_MOMENTUM_VARIANTS = 5
+
+
 def _parse_date(value: str, flag_name: str) -> pd.Timestamp:
     try:
         return pd.Timestamp(value)
@@ -42,6 +45,143 @@ def _load_universe_symbols(settings_path: Path, settings: dict[str, Any]) -> lis
     return cleaned
 
 
+
+
+def _normalize_variant_name(value: Any) -> str:
+    name = str(value or "").strip().lower()
+    cleaned = "".join(ch if (ch.isalnum() or ch in {"-", "_"}) else "_" for ch in name)
+    while "__" in cleaned:
+        cleaned = cleaned.replace("__", "_")
+    return cleaned.strip("_")
+
+
+def _parse_momentum_variants(strategy_cfg: dict[str, Any]) -> list[dict[str, Any]]:
+    if not isinstance(strategy_cfg, dict):
+        raise ValueError("strategy config must be a mapping.")
+
+    variants_raw = strategy_cfg.get("variants")
+    base_params = {
+        "top_k": strategy_cfg.get("top_k", 1),
+        "min_score": strategy_cfg.get("min_score", 0.0),
+        "min_volume_ratio": strategy_cfg.get("min_volume_ratio", 0.8),
+    }
+
+    if variants_raw is None:
+        return [
+            {
+                "name": "baseline",
+                "params": base_params,
+            }
+        ]
+
+    if not isinstance(variants_raw, list) or not variants_raw:
+        raise ValueError("strategy.variants must be a non-empty list when provided.")
+
+    if len(variants_raw) > MAX_MOMENTUM_VARIANTS:
+        raise ValueError(
+            f"strategy.variants supports at most {MAX_MOMENTUM_VARIANTS} variants for M3 comparison scope."
+        )
+
+    parsed: list[dict[str, Any]] = []
+    seen_names: set[str] = set()
+
+    for index, item in enumerate(variants_raw):
+        if not isinstance(item, dict):
+            raise ValueError(f"strategy.variants[{index}] must be a mapping.")
+
+        normalized_name = _normalize_variant_name(item.get("name"))
+        if not normalized_name:
+            raise ValueError(f"strategy.variants[{index}].name is required.")
+        if normalized_name in seen_names:
+            raise ValueError(f"Duplicate strategy variant name: {normalized_name}")
+        seen_names.add(normalized_name)
+
+        params = dict(base_params)
+        variant_params = item.get("params", {})
+        if variant_params is None:
+            variant_params = {}
+        if not isinstance(variant_params, dict):
+            raise ValueError(f"strategy.variants[{index}].params must be a mapping.")
+
+        params.update(variant_params)
+
+        if int(params.get("top_k", 0)) <= 0:
+            raise ValueError(f"strategy variant {normalized_name} has invalid top_k={params.get('top_k')}")
+        if float(params.get("min_volume_ratio", 0.0)) < 0.0:
+            raise ValueError(
+                f"strategy variant {normalized_name} has invalid min_volume_ratio={params.get('min_volume_ratio')}"
+            )
+
+        parsed.append({"name": normalized_name, "params": params})
+
+    return parsed
+
+
+def _run_single_variant(
+    *,
+    settings: dict[str, Any],
+    config_path: Path,
+    variant_name: str,
+    variant_params: dict[str, Any],
+    features_df: pd.DataFrame,
+    benchmark_symbol: str,
+    symbols: list[str],
+    start_ts: pd.Timestamp | None,
+    end_ts: pd.Timestamp | None,
+) -> dict[str, Any]:
+    portfolio_cfg = settings.get("portfolio", {})
+    execution_cfg = settings.get("execution", {})
+
+    portfolio = Portfolio(initial_cash=float(portfolio_cfg.get("initial_cash", 0.0)))
+    broker = Broker(
+        commission_rate=float(execution_cfg.get("commission_rate", 0.0)),
+        slippage_rate=float(execution_cfg.get("slippage_rate", 0.0)),
+        fractional_shares=bool(portfolio_cfg.get("fractional_shares", True)),
+    )
+    strategy = MomentumStrategy(
+        max_open_positions=int(portfolio_cfg.get("max_open_positions", 1)),
+        top_k=int(variant_params.get("top_k", 1)),
+        min_score=float(variant_params.get("min_score", 0.0)),
+        min_volume_ratio=float(variant_params.get("min_volume_ratio", 0.8)),
+    )
+
+    simulator = DailySimulator(
+        market_data=features_df,
+        strategy=strategy,
+        broker=broker,
+        portfolio=portfolio,
+        price_column="adj_close",
+    )
+
+    run_config = {
+        "settings": settings,
+        "strategy_variant": {
+            "name": variant_name,
+            "params": variant_params,
+        },
+        "cli_overrides": {
+            "start_date": str(start_ts.date()) if start_ts is not None else None,
+            "end_date": str(end_ts.date()) if end_ts is not None else None,
+        },
+        "baselines": {
+            "benchmark_symbol": benchmark_symbol,
+            "equal_weight_universe": symbols,
+            "equal_weight_rebalance_frequency": "daily",
+        },
+    }
+
+    results = simulator.run(
+        start_date=start_ts,
+        end_date=end_ts,
+        benchmark_symbol=benchmark_symbol,
+        equal_weight_universe=symbols,
+        run_config=run_config,
+        config_source=str(config_path),
+        run_label=f"variant-{variant_name}",
+    )
+    results["strategy_variant"] = {"name": variant_name, "params": dict(variant_params)}
+    return results
+
 def run_backtest(
     config_path: Path,
     start_date_override: str | None = None,
@@ -49,8 +189,6 @@ def run_backtest(
 ) -> dict[str, Any]:
     settings = load_yaml(config_path)
 
-    portfolio_cfg = settings.get("portfolio", {})
-    execution_cfg = settings.get("execution", {})
     strategy_cfg = settings.get("strategy", {})
     benchmark_symbol = get_benchmark_symbol(settings)
 
@@ -74,48 +212,28 @@ def run_backtest(
     market_df = load_market_data(symbols=symbols + ([benchmark_symbol] if benchmark_symbol and benchmark_symbol not in symbols else []))
     features_df = add_basic_features(market_df)
 
-    portfolio = Portfolio(initial_cash=float(portfolio_cfg.get("initial_cash", 0.0)))
-    broker = Broker(
-        commission_rate=float(execution_cfg.get("commission_rate", 0.0)),
-        slippage_rate=float(execution_cfg.get("slippage_rate", 0.0)),
-        fractional_shares=bool(portfolio_cfg.get("fractional_shares", True)),
-    )
-    strategy = MomentumStrategy(
-        max_open_positions=int(portfolio_cfg.get("max_open_positions", 1)),
-        top_k=int(strategy_cfg.get("top_k", 1)),
-        min_score=0.0,
-    )
+    variants = _parse_momentum_variants(strategy_cfg)
 
-    simulator = DailySimulator(
-        market_data=features_df,
-        strategy=strategy,
-        broker=broker,
-        portfolio=portfolio,
-        price_column="adj_close",
-    )
+    variant_results = [
+        _run_single_variant(
+            settings=settings,
+            config_path=config_path,
+            variant_name=variant["name"],
+            variant_params=variant["params"],
+            features_df=features_df,
+            benchmark_symbol=benchmark_symbol,
+            symbols=symbols,
+            start_ts=start_ts,
+            end_ts=end_ts,
+        )
+        for variant in variants
+    ]
 
-    run_config = {
-        "settings": settings,
-        "cli_overrides": {
-            "start_date": str(start_ts.date()) if start_ts is not None else None,
-            "end_date": str(end_ts.date()) if end_ts is not None else None,
-        },
-        "baselines": {
-            "benchmark_symbol": benchmark_symbol,
-            "equal_weight_universe": symbols,
-            "equal_weight_rebalance_frequency": "daily",
-        },
+    return {
+        "variant_results": variant_results,
+        "strategy_variants": [{"name": v["name"], "params": dict(v["params"])} for v in variants],
+        **variant_results[0],
     }
-
-    results = simulator.run(
-        start_date=start_ts,
-        end_date=end_ts,
-        benchmark_symbol=benchmark_symbol,
-        equal_weight_universe=symbols,
-        run_config=run_config,
-        config_source=str(config_path),
-    )
-    return results
 
 
 def _build_parser() -> argparse.ArgumentParser:
@@ -166,6 +284,13 @@ def main(argv: list[str] | None = None) -> int:
 
     print("-" * 60)
     print("Backtest completed")
+    variant_results = results.get("variant_results", [])
+    if len(variant_results) > 1:
+        print(f"Variants executed: {len(variant_results)}")
+        print("Variant outputs:")
+        for item in variant_results:
+            variant = item.get("strategy_variant", {}).get("name", "baseline")
+            print(f"  - {variant}: {item.get('output_dir')}")
     print(f"Run ID: {results.get('run_id')}")
     print(f"Output directory: {results.get('output_dir')}")
     print(f"Window: {sim_start} -> {sim_end}")

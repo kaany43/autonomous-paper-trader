@@ -20,11 +20,13 @@ class MomentumStrategy(BaseStrategy):
         max_open_positions: int = 2,
         top_k: int = 2,
         min_score: float = 0.0,
+        min_volume_ratio: float = 0.8,
     ) -> None:
         self.max_open_positions = int(max_open_positions)
         self.top_k = int(top_k)
         self.min_score = float(min_score)
-
+        self.min_volume_ratio = float(min_volume_ratio)
+ 
     @staticmethod
     def _validate_required_columns(df: pd.DataFrame) -> None:
         required = [
@@ -42,8 +44,7 @@ class MomentumStrategy(BaseStrategy):
         if missing:
             raise ValueError(f"Missing required strategy columns: {', '.join(missing)}")
 
-    @staticmethod
-    def _entry_condition(row: pd.Series) -> bool:
+    def _entry_condition(self, row: pd.Series) -> bool:
         """
         Simple long entry logic.
         Uses only same-day features that are derived from historical data up to that day.
@@ -58,6 +59,7 @@ class MomentumStrategy(BaseStrategy):
             and row["adj_close"] > row["ma_20"]
             and row["ma_20"] > row["ma_50"]
             and row["volume_ratio_20"] > 0.8
+            and row["volume_ratio_20"] > self.min_volume_ratio
         )
 
     @staticmethod

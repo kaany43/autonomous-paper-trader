@@ -47,6 +47,24 @@ strategy:
   lookback_short: 20
   lookback_long: 50
   top_k: 2
+  min_score: 0.0
+  min_volume_ratio: 0.8
+  variants:
+    - name: baseline
+      params:
+        top_k: 2
+        min_score: 0.0
+        min_volume_ratio: 0.8
+    - name: faster_momentum
+      params:
+        top_k: 3
+        min_score: 0.0
+        min_volume_ratio: 0.6
+    - name: slower_momentum
+      params:
+        top_k: 1
+        min_score: 0.01
+        min_volume_ratio: 1.0
 
 output:
   save_trades_csv: true
