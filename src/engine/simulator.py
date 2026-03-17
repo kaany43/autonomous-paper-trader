@@ -218,19 +218,30 @@ class BenchmarkComparator:
 
         curve = canonical_dates.merge(benchmark_prices, on="date", how="left").sort_values("date")
         curve["benchmark_symbol"] = symbol
-        curve["benchmark_price"] = curve["benchmark_price"].ffill().bfill()
 
-        if curve["benchmark_price"].isna().all():
+        first_price_index = curve["benchmark_price"].first_valid_index()
+        if first_price_index is None:
             curve["benchmark_return"] = 0.0
             curve["benchmark_equity"] = float(initial_capital)
             curve["cumulative_return"] = 0.0
             return curve[BENCHMARK_EQUITY_COLUMNS]
 
-        curve["benchmark_return"] = curve["benchmark_price"].pct_change().fillna(0.0)
-        curve["benchmark_return"] = curve["benchmark_return"].replace([pd.NA, float("inf"), float("-inf")], 0.0).fillna(0.0)
+        curve["benchmark_price"] = curve["benchmark_price"].ffill()
 
+        first_benchmark_price = float(curve.loc[first_price_index, "benchmark_price"])
         starting_capital = float(initial_capital)
-        curve["benchmark_equity"] = starting_capital * (1.0 + curve["benchmark_return"]).cumprod()
+        benchmark_shares = 0.0
+        if first_benchmark_price > 0.0:
+            benchmark_shares = starting_capital / first_benchmark_price
+
+        curve["benchmark_equity"] = float(starting_capital)
+        invested_mask = curve.index >= first_price_index
+        curve.loc[invested_mask, "benchmark_equity"] = (
+            benchmark_shares * curve.loc[invested_mask, "benchmark_price"]
+        )
+
+        curve["benchmark_return"] = curve["benchmark_equity"].pct_change().fillna(0.0)
+        curve["benchmark_return"] = curve["benchmark_return"].replace([pd.NA, float("inf"), float("-inf")], 0.0).fillna(0.0)
 
         if starting_capital == 0.0:
             curve["cumulative_return"] = 0.0
