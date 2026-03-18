@@ -286,10 +286,42 @@ baselines:
             "aligned_equity_curves_csv_path": comparison_dir / "aligned_equity_curves.csv",
             "aligned_drawdowns_csv_path": comparison_dir / "aligned_drawdowns.csv",
             "comparison_summary_json_path": comparison_dir / "comparison_summary.json",
+            "ranking_summary_json_path": comparison_dir / "ranking_summary.json",
+            "strategy_ranking_csv_path": comparison_dir / "strategy_ranking.csv",
         }
         for key, expected_path in expected_paths.items():
             self.assertEqual(result[key], expected_path)
             self.assertTrue(expected_path.exists())
+
+    def test_ranking_summary_artifact_identifies_preferred_run(self) -> None:
+        self._write_config()
+        result = run_m3_comparison(config_path=self.config_path, output_root=self.output_dir)
+
+        ranking_summary = json.loads(result["ranking_summary_json_path"].read_text(encoding="utf-8"))
+        ranking_csv = pd.read_csv(result["strategy_ranking_csv_path"])
+        manifest = json.loads(result["comparison_manifest_path"].read_text(encoding="utf-8"))
+        summary = json.loads(result["comparison_summary_path"].read_text(encoding="utf-8"))
+
+        self.assertEqual(ranking_summary["comparison_run_id"], result["comparison_run_id"])
+        self.assertEqual(ranking_summary["preferred_run"]["rank"], 1)
+        self.assertEqual(ranking_summary["preferred_run"]["run_name"], ranking_csv.iloc[0]["run_name"])
+        self.assertEqual(ranking_csv["rank"].tolist(), list(range(1, len(ranking_csv) + 1)))
+        self.assertEqual(
+            [item["run_name"] for item in ranking_summary["ranked_runs"]],
+            ranking_csv["run_name"].tolist(),
+        )
+        self.assertEqual(summary["preferred_run"]["run_name"], ranking_summary["preferred_run"]["run_name"])
+        self.assertEqual(
+            summary["artifacts"]["ranking_summary_json_path"],
+            str(result["ranking_summary_json_path"]),
+        )
+        self.assertEqual(
+            summary["artifacts"]["strategy_ranking_csv_path"],
+            str(result["strategy_ranking_csv_path"]),
+        )
+        self.assertEqual(manifest["ranking_summary_json_path"], str(result["ranking_summary_json_path"]))
+        self.assertEqual(manifest["strategy_ranking_csv_path"], str(result["strategy_ranking_csv_path"]))
+        self.assertEqual(manifest["preferred_run"]["run_name"], ranking_summary["preferred_run"]["run_name"])
 
     def test_repeated_runs_preserve_export_schema_and_column_ordering(self) -> None:
         self._write_config()

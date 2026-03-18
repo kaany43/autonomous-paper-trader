@@ -13,6 +13,7 @@ from src.data.features import add_basic_features
 from src.data.loader import get_benchmark_symbol, load_market_data, load_yaml
 from src.engine.broker import Broker
 from src.engine.comparison_metrics import write_comparison_metrics
+from src.engine.comparison_ranking import write_comparison_ranking
 from src.engine.comparison_exports import write_aligned_equity_curves
 from src.engine.metrics import compute_backtest_metrics, write_metrics_json
 from src.engine.portfolio import Portfolio
@@ -452,6 +453,12 @@ def run_m3_comparison(
         created_at=created_at,
         runs=run_records,
     )
+    ranking_paths = write_comparison_ranking(
+        comparison_dir=comparison_dir,
+        comparison_run_id=comparison_run_id,
+        generated_at=created_at,
+        comparison_metrics_csv_path=comparison_metrics_paths["csv_path"],
+    )
     aligned_curve_paths = _write_aligned_curves(comparison_dir=comparison_dir, run_records=run_records)
 
     summary_payload = {
@@ -477,13 +484,18 @@ def run_m3_comparison(
             "aligned_equity_curves_csv_path": str(aligned_curve_paths["equity_path"]),
             "aligned_drawdowns_csv_path": str(aligned_curve_paths["drawdown_path"]),
             "comparison_metrics_json_path": str(comparison_metrics_paths["json_path"]),
+            "ranking_summary_json_path": str(ranking_paths["ranking_summary_json_path"]),
+            "strategy_ranking_csv_path": str(ranking_paths["strategy_ranking_csv_path"]),
         },
         "exports": {
             "comparison_metrics_json_path": "comparison_metrics.json",
             "comparison_metrics_csv_path": "comparison_metrics.csv",
             "aligned_equity_curves_csv": "aligned_equity_curves.csv",
             "aligned_drawdowns_csv": "aligned_drawdowns.csv",
+            "ranking_summary_json": "ranking_summary.json",
+            "strategy_ranking_csv": "strategy_ranking.csv",
         },
+        "preferred_run": ranking_paths["preferred_run"],
     }
     comparison_summary_path = _write_json(comparison_dir / COMPARISON_SUMMARY_FILENAME, summary_payload)
 
@@ -506,6 +518,9 @@ def run_m3_comparison(
         "aligned_drawdowns_csv_path": str(comparison_metrics_paths["aligned_drawdowns_csv_path"]),
         "comparison_summary_json_path": str(comparison_metrics_paths["comparison_summary_json_path"]),
         "comparison_summary_path": str(comparison_metrics_paths["comparison_summary_json_path"]),
+        "ranking_summary_json_path": str(ranking_paths["ranking_summary_json_path"]),
+        "strategy_ranking_csv_path": str(ranking_paths["strategy_ranking_csv_path"]),
+        "preferred_run": ranking_paths["preferred_run"],
         "runs": run_records,
         "compared_strategies": [item["name"] for item in run_records],
     }
@@ -527,6 +542,9 @@ def run_m3_comparison(
         "aligned_equity_curves_csv_path": comparison_metrics_paths["aligned_equity_curves_csv_path"],
         "aligned_drawdowns_csv_path": comparison_metrics_paths["aligned_drawdowns_csv_path"],
         "comparison_summary_json_path": comparison_metrics_paths["comparison_summary_json_path"],
+        "ranking_summary_json_path": ranking_paths["ranking_summary_json_path"],
+        "strategy_ranking_csv_path": ranking_paths["strategy_ranking_csv_path"],
+        "preferred_run": ranking_paths["preferred_run"],
         "runs": run_records,
     }
 
