@@ -1,5 +1,7 @@
 # M3 Evaluation Protocol (Official Contract)
 
+For the contributor-facing workflow and interpretation guide, see `docs/m3_comparison_methodology.md`.
+
 The file `config/evaluation/m3_protocol.yaml` is the **single official evaluation setup for M3**.  
 All momentum strategy variants and baseline strategies must run under this same protocol.
 
@@ -54,16 +56,16 @@ At minimum, reported metrics must include:
 
 ## How to run with the official protocol
 
-Use the standard backtest entrypoint and point it to the protocol config:
+Use the comparison runner entrypoint and point it to the protocol config:
 
 ```bash
-python -m src.cli.backtest --config config/evaluation/m3_protocol.yaml
+python -m src.engine.comparison_runner --config config/evaluation/m3_protocol.yaml
 ```
 
 Optional date override (if you need a subset run) still uses the same protocol assumptions:
 
 ```bash
-python -m src.cli.backtest --config config/evaluation/m3_protocol.yaml --start-date 2021-01-01 --end-date 2021-12-31
+python -m src.engine.comparison_runner --config config/evaluation/m3_protocol.yaml --start-date 2021-01-01 --end-date 2021-12-31
 ```
 
 ## Guidance for future baselines
