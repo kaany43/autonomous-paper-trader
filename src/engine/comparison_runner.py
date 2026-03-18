@@ -13,6 +13,7 @@ from src.data.features import add_basic_features
 from src.data.loader import get_benchmark_symbol, load_market_data, load_yaml
 from src.engine.broker import Broker
 from src.engine.comparison_metrics import write_comparison_metrics
+from src.engine.comparison_exports import write_aligned_equity_curves
 from src.engine.metrics import compute_backtest_metrics, write_metrics_json
 from src.engine.portfolio import Portfolio
 from src.engine.run_artifacts import RunArtifactManager
@@ -29,6 +30,9 @@ REPO_ROOT = Path(__file__).resolve().parents[2]
 COMPARISONS_OUTPUT_DIR = REPO_ROOT / "outputs" / "backtests" / "comparisons"
 COMPARISON_MANIFEST_FILENAME = "manifest.json"
 COMPARISON_CONFIG_FILENAME = "comparison_config.json"
+COMPARISON_SUMMARY_FILENAME = "comparison_summary.json"
+ALIGNED_EQUITY_CURVES_FILENAME = "aligned_equity_curves.csv"
+ALIGNED_DRAWDOWNS_FILENAME = "aligned_drawdowns.csv"
 
 
 def _parse_date(value: str, flag_name: str) -> pd.Timestamp:
@@ -114,6 +118,72 @@ def _build_portfolio_curve_from_column(curve: pd.DataFrame, equity_column: str) 
     result = curve[["date", equity_column]].copy()
     result = result.rename(columns={equity_column: "total_equity"})
     return result
+
+def _equity_input_for_run(run: dict[str, Any]) -> tuple[Path, str]:
+    output_dir = Path(run["output_dir"])
+    run_name = str(run.get("name", ""))
+
+    if run_name == "buy_and_hold":
+        return output_dir / BENCHMARK_EQUITY_FILENAME, "benchmark_equity"
+    if run_name == "equal_weight":
+        return output_dir / EQUAL_WEIGHT_EQUITY_FILENAME, "equal_weight_equity"
+    return output_dir / "daily_portfolio_snapshots.csv", "total_equity"
+
+
+def _load_equity_series(run: dict[str, Any]) -> pd.DataFrame:
+    curve_path, equity_column = _equity_input_for_run(run)
+    if not curve_path.exists():
+        return pd.DataFrame(columns=["date", "run_name", "equity"])
+
+    curve = pd.read_csv(curve_path)
+    if "date" not in curve.columns or equity_column not in curve.columns:
+        return pd.DataFrame(columns=["date", "run_name", "equity"])
+
+    normalized = curve[["date", equity_column]].copy()
+    normalized["date"] = pd.to_datetime(normalized["date"], errors="coerce").dt.normalize()
+    normalized[equity_column] = pd.to_numeric(normalized[equity_column], errors="coerce")
+    normalized = normalized.dropna(subset=["date", equity_column])
+    normalized = normalized.sort_values("date").drop_duplicates(subset=["date"], keep="last")
+    normalized = normalized.rename(columns={equity_column: "equity"})
+    normalized["run_name"] = str(run.get("name", ""))
+    return normalized[["date", "run_name", "equity"]]
+
+
+def _write_aligned_curves(
+    *,
+    comparison_dir: Path,
+    run_records: list[dict[str, Any]],
+) -> dict[str, Path]:
+    curves = [_load_equity_series(run) for run in run_records]
+    available_curves = [curve for curve in curves if not curve.empty]
+
+    if not available_curves:
+        aligned_equity_df = pd.DataFrame(columns=["date"])
+        aligned_drawdown_df = pd.DataFrame(columns=["date"])
+    else:
+        combined = pd.concat(available_curves, ignore_index=True)
+        aligned_equity_df = (
+            combined.pivot(index="date", columns="run_name", values="equity")
+            .sort_index()
+            .ffill()
+            .reset_index()
+        )
+        aligned_equity_df["date"] = pd.to_datetime(aligned_equity_df["date"], errors="coerce").dt.strftime("%Y-%m-%d")
+
+        drawdown_df = aligned_equity_df.copy()
+        run_columns = [column for column in drawdown_df.columns if column != "date"]
+        for column in run_columns:
+            series = pd.to_numeric(drawdown_df[column], errors="coerce")
+            running_peak = series.cummax()
+            drawdown_df[column] = (series / running_peak) - 1.0
+        aligned_drawdown_df = drawdown_df
+
+    equity_path = comparison_dir / ALIGNED_EQUITY_CURVES_FILENAME
+    drawdown_path = comparison_dir / ALIGNED_DRAWDOWNS_FILENAME
+    aligned_equity_df.to_csv(equity_path, index=False)
+    aligned_drawdown_df.to_csv(drawdown_path, index=False)
+    return {"equity_path": equity_path, "drawdown_path": drawdown_path}
+
 
 
 def _run_momentum_variant(
@@ -382,6 +452,47 @@ def run_m3_comparison(
         created_at=created_at,
         runs=run_records,
     )
+    aligned_curve_paths = _write_aligned_curves(comparison_dir=comparison_dir, run_records=run_records)
+
+    summary_payload = {
+        "comparison_export_version": 1,
+        "comparison_run_id": comparison_run_id,
+        "created_at": created_at,
+        "status": "completed",
+        "comparison_config_path": str(comparison_config_path),
+        "config_source": str(config_path),
+        "deterministic_runs": [
+            {
+                "run_name": item["name"],
+                "run_id": item["run_id"],
+                "strategy_type": item["strategy_type"],
+                "variant_name": item["variant_name"],
+                "output_dir": item["output_dir"],
+            }
+            for item in run_records
+        ],
+        "runs": [{"run_name": item["name"], "run_id": item["run_id"]} for item in run_records],
+        "artifacts": {
+            "comparison_metrics_csv_path": str(comparison_metrics_paths["csv_path"]),
+            "aligned_equity_curves_csv_path": str(aligned_curve_paths["equity_path"]),
+            "aligned_drawdowns_csv_path": str(aligned_curve_paths["drawdown_path"]),
+            "comparison_metrics_json_path": str(comparison_metrics_paths["json_path"]),
+        },
+        "exports": {
+            "comparison_metrics_json_path": "comparison_metrics.json",
+            "comparison_metrics_csv_path": "comparison_metrics.csv",
+            "aligned_equity_curves_csv": "aligned_equity_curves.csv",
+            "aligned_drawdowns_csv": "aligned_drawdowns.csv",
+        },
+    }
+    comparison_summary_path = _write_json(comparison_dir / COMPARISON_SUMMARY_FILENAME, summary_payload)
+
+    aligned_equity_csv_path = Path(
+        comparison_metrics_paths.get("aligned_equity_csv_path", comparison_dir / "aligned_equity.csv")
+    )
+    aligned_drawdowns_csv_path = Path(
+        comparison_metrics_paths.get("aligned_drawdowns_csv_path", comparison_dir / "aligned_drawdowns.csv")
+    )
 
     manifest_payload = {
         "comparison_run_id": comparison_run_id,
@@ -390,6 +501,11 @@ def run_m3_comparison(
         "config_snapshot_path": str(comparison_config_path),
         "comparison_metrics_json_path": str(comparison_metrics_paths["json_path"]),
         "comparison_metrics_csv_path": str(comparison_metrics_paths["csv_path"]),
+        "aligned_equity_curves_csv_path": str(comparison_metrics_paths["aligned_equity_curves_csv_path"]),
+        "aligned_equity_csv_path": str(comparison_metrics_paths["aligned_equity_curves_csv_path"]),
+        "aligned_drawdowns_csv_path": str(comparison_metrics_paths["aligned_drawdowns_csv_path"]),
+        "comparison_summary_json_path": str(comparison_metrics_paths["comparison_summary_json_path"]),
+        "comparison_summary_path": str(comparison_metrics_paths["comparison_summary_json_path"]),
         "runs": run_records,
         "compared_strategies": [item["name"] for item in run_records],
     }
@@ -404,6 +520,13 @@ def run_m3_comparison(
         "comparison_config_path": comparison_config_path,
         "comparison_metrics_json_path": comparison_metrics_paths["json_path"],
         "comparison_metrics_csv_path": comparison_metrics_paths["csv_path"],
+        "aligned_equity_curves_csv_path": aligned_curve_paths["equity_path"],
+        "aligned_drawdowns_csv_path": aligned_curve_paths["drawdown_path"],
+        "comparison_summary_path": comparison_summary_path,
+        "aligned_equity_csv_path": aligned_equity_csv_path,
+        "aligned_equity_curves_csv_path": comparison_metrics_paths["aligned_equity_curves_csv_path"],
+        "aligned_drawdowns_csv_path": comparison_metrics_paths["aligned_drawdowns_csv_path"],
+        "comparison_summary_json_path": comparison_metrics_paths["comparison_summary_json_path"],
         "runs": run_records,
     }
 
