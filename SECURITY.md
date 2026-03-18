@@ -8,7 +8,7 @@ Only the latest released minor version is supported with security fixes.
 
 | Version | Supported |
 | ------- | --------- |
-| 0.1.x   | ✅        |
+| 0.3.x   | ✅        |
 | < 0.1   | ❌        |
 
 > Note: The `main` branch may contain unreleased development changes for the next milestone and is not considered a supported release version.
