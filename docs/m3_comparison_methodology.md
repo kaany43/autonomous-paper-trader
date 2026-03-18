@@ -2,7 +2,7 @@
 
 This page explains what the M3 comparison workflow is trying to answer, how the current implementation runs the comparison, and how contributors should read the exported results.
 
-For the fixed protocol inputs, see `config/evaluation/m3_protocol.yaml`. For the high-level contract summary, see `docs/m3_evaluation_protocol.md`.
+For the fixed protocol inputs, see `config/evaluation/m3_protocol.yaml`. For the high-level contract summary, see `docs/m3_evaluation_protocol.md`. For the first milestone-level outcome write-up, see `docs/m3_results_summary.md`.
 
 ## Where M3 Sits in the Project
 

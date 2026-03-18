@@ -52,6 +52,7 @@ The repository now includes the core pieces from the first three milestones:
 The project's M3 milestone evaluates the momentum strategy against simple baselines under one shared protocol before later roadmap decisions are made.
 
 - Methodology guide: `docs/m3_comparison_methodology.md`
+- Results summary: `docs/m3_results_summary.md`
 - Official protocol config: `config/evaluation/m3_protocol.yaml`
 - Protocol summary: `docs/m3_evaluation_protocol.md`
 
