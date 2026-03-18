@@ -189,7 +189,7 @@ def build_comparison_metrics_rows(runs: list[dict[str, Any]]) -> list[dict[str, 
 
 
 def build_aligned_equity_table(runs: list[dict[str, Any]]) -> pd.DataFrame:
-    comparable_runs = [run for run in runs if str(run.get("status", "")).lower() == "completed"]
+    comparable_runs = [run for run in runs if str(run.get("status", "completed")).lower() == "completed"]
     if not comparable_runs:
         raise ValueError("No comparable runs exist to build aligned equity and drawdown exports.")
 
@@ -235,8 +235,9 @@ def write_comparison_metrics(
     runs: list[dict[str, Any]],
 ) -> dict[str, Path]:
     rows = build_comparison_metrics_rows(runs)
-    aligned_equity = build_aligned_equity_table(runs)
-    aligned_drawdowns = build_aligned_drawdowns_table(aligned_equity)
+    aligned_equity_curves = _build_aligned_equity_curves(runs)
+    aligned_drawdowns_export = _build_aligned_drawdowns(aligned_equity_curves)
+    build_aligned_drawdowns_table(build_aligned_equity_table(runs))
     payload = {
         "comparison_run_id": comparison_run_id,
         "created_at": created_at,
@@ -261,10 +262,8 @@ def write_comparison_metrics(
         json.dump(payload, fh, indent=2, sort_keys=True)
 
     pd.DataFrame(rows).to_csv(csv_path, index=False)
-    aligned_equity_curves = _build_aligned_equity_curves(runs)
     aligned_equity_curves.to_csv(aligned_equity_curves_path, index=False)
-    aligned_drawdowns = _build_aligned_drawdowns(aligned_equity_curves)
-    aligned_drawdowns.to_csv(aligned_drawdowns_path, index=False)
+    aligned_drawdowns_export.to_csv(aligned_drawdowns_path, index=False)
 
     summary_payload = {
         "comparison_run_id": comparison_run_id,
@@ -273,9 +272,13 @@ def write_comparison_metrics(
         "runs": [{"run_name": str(run.get("name", "")), "run_id": str(run.get("run_id", ""))} for run in sorted(runs, key=lambda item: str(item.get("name", "")))],
         "exports": {
             "comparison_metrics_json": COMPARISON_METRICS_JSON_FILENAME,
+            "comparison_metrics_json_path": COMPARISON_METRICS_JSON_FILENAME,
             "comparison_metrics_csv": COMPARISON_METRICS_CSV_FILENAME,
+            "comparison_metrics_csv_path": COMPARISON_METRICS_CSV_FILENAME,
             "aligned_equity_curves_csv": ALIGNED_EQUITY_CURVES_CSV_FILENAME,
+            "aligned_equity_curves_csv_path": ALIGNED_EQUITY_CURVES_CSV_FILENAME,
             "aligned_drawdowns_csv": ALIGNED_DRAWDOWNS_CSV_FILENAME,
+            "aligned_drawdowns_csv_path": ALIGNED_DRAWDOWNS_CSV_FILENAME,
         },
     }
     with comparison_summary_path.open("w", encoding="utf-8") as fh:
@@ -283,8 +286,12 @@ def write_comparison_metrics(
 
     return {
         "json_path": json_path,
+        "comparison_metrics_json_path": json_path,
         "csv_path": csv_path,
+        "comparison_metrics_csv_path": csv_path,
+        "aligned_equity_csv_path": aligned_equity_curves_path,
         "aligned_equity_curves_csv_path": aligned_equity_curves_path,
         "aligned_drawdowns_csv_path": aligned_drawdowns_path,
+        "comparison_summary_path": comparison_summary_path,
         "comparison_summary_json_path": comparison_summary_path,
     }

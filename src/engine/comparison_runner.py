@@ -471,11 +471,18 @@ def run_m3_comparison(
             }
             for item in run_records
         ],
+        "runs": [{"run_name": item["name"], "run_id": item["run_id"]} for item in run_records],
         "artifacts": {
             "comparison_metrics_csv_path": str(comparison_metrics_paths["csv_path"]),
             "aligned_equity_curves_csv_path": str(aligned_curve_paths["equity_path"]),
             "aligned_drawdowns_csv_path": str(aligned_curve_paths["drawdown_path"]),
             "comparison_metrics_json_path": str(comparison_metrics_paths["json_path"]),
+        },
+        "exports": {
+            "comparison_metrics_json_path": "comparison_metrics.json",
+            "comparison_metrics_csv_path": "comparison_metrics.csv",
+            "aligned_equity_curves_csv": "aligned_equity_curves.csv",
+            "aligned_drawdowns_csv": "aligned_drawdowns.csv",
         },
     }
     comparison_summary_path = _write_json(comparison_dir / COMPARISON_SUMMARY_FILENAME, summary_payload)
