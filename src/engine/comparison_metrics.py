@@ -237,7 +237,6 @@ def write_comparison_metrics(
     rows = build_comparison_metrics_rows(runs)
     aligned_equity_curves = _build_aligned_equity_curves(runs)
     aligned_drawdowns_export = _build_aligned_drawdowns(aligned_equity_curves)
-    build_aligned_drawdowns_table(build_aligned_equity_table(runs))
     payload = {
         "comparison_run_id": comparison_run_id,
         "created_at": created_at,
