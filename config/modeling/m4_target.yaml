@@ -1,0 +1,13 @@
+target:
+  milestone: M4
+  contract_name: m4_official_target
+  version: 1
+  task_type: classification
+  official_target_column: target_next_session_direction
+  helper_return_column: target_next_session_return
+  forecast_horizon_sessions: 1
+  price_column: adj_close
+  positive_return_threshold: 0.0
+  invalid_target_policy: null_and_exclude_from_training
+  feature_timestamp: decision_session_close
+  target_timestamp: next_tradable_session_close
