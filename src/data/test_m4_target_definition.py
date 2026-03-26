@@ -91,6 +91,30 @@ class M4TargetDefinitionTests(unittest.TestCase):
         self.assertAlmostEqual(float(aaa_start[self.definition.helper_return_column]), (110.0 / 101.0) - 1.0)
         self.assertEqual(int(aaa_start[self.definition.official_target_column]), 1)
 
+    def test_target_generation_accepts_mixed_naive_and_tz_aware_dates(self) -> None:
+        market = pd.DataFrame(
+            [
+                {"date": "2024-01-01", "symbol": "AAA", "adj_close": 100.0},
+                {"date": "2024-01-02T00:00:00Z", "symbol": "AAA", "adj_close": 101.0},
+                {"date": "2024-01-03", "symbol": "AAA", "adj_close": 102.0},
+            ]
+        )
+
+        result = add_m4_target_columns(market, self.definition)
+
+        self.assertTrue(pd.api.types.is_datetime64_ns_dtype(result["date"]))
+        self.assertEqual(
+            result["date"].tolist(),
+            [
+                pd.Timestamp("2024-01-01"),
+                pd.Timestamp("2024-01-02"),
+                pd.Timestamp("2024-01-03"),
+            ],
+        )
+        first_row = result.iloc[0]
+        self.assertTrue(bool(first_row[TARGET_VALID_COLUMN]))
+        self.assertEqual(first_row[TARGET_DATE_COLUMN], pd.Timestamp("2024-01-02"))
+
     def test_target_alignment_is_forward_looking_and_grouped_per_symbol(self) -> None:
         market = pd.DataFrame(
             [

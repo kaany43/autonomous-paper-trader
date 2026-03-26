@@ -108,7 +108,8 @@ def add_m4_target_columns(
         normalized["date"],
         errors="coerce",
         format="mixed",
-    ).dt.tz_localize(None)
+        utc=True,
+    ).dt.tz_convert(None)
     if normalized["date"].isna().any():
         raise ValueError("Target generation requires valid non-null date values.")
 
