@@ -61,3 +61,16 @@ Use the comparison runner to execute the full M3 workflow:
 ```bash
 python -m src.engine.comparison_runner --config config/evaluation/m3_protocol.yaml
 ```
+
+## M4 Data Preparation
+
+The official M4 target contract and the dedicated target-preparation pipeline are documented here:
+
+- `docs/m4_target_definition.md`
+- `docs/m4_target_preparation.md`
+
+Prepare the modeling dataset from the reusable processed feature parquet with:
+
+```bash
+python -m src.data.target_pipeline
+```

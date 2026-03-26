@@ -44,10 +44,13 @@ Zero return is treated as non-positive and therefore maps to class `0`.
 - The official target for that row refers strictly to the next tradable session for the same symbol, `t+1`.
 - Target generation uses a per-symbol forward shift after sorting, so the row at `t` never uses prices from `t+1` as input features.
 - The simulator already strips all `target_` columns before strategy execution, which keeps model labels out of live decision inputs.
+- The dedicated preparation step also records `target_date` and `target_is_valid` so alignment remains auditable in the saved modeling dataset.
 
 ## Missing and invalid target handling
 
-Rows are kept in the processed dataset, but the target is set to null and must be excluded from supervised training or validation when any of the following is true:
+Label construction first marks invalid rows with null targets. The dedicated preparation pipeline then excludes those invalid rows when it writes `data/processed/m4_modeling_dataset.parquet`.
+
+Rows are invalid when any of the following is true:
 
 - there is no next tradable session for that symbol
 - the current `adj_close` is missing or non-positive
@@ -58,3 +61,9 @@ As a repo-consistent normalization step, duplicate `symbol, date` rows are colla
 ## Relationship to the current simulator
 
 The current project operates on daily processed bars and current simulator code paths use `adj_close` as the effective pricing field. The M4 target is therefore anchored to `adj_close` so the first modeling layer inherits the same daily-bar convention already used elsewhere in the repository.
+
+## Preparation pipeline
+
+The reproducible target-preparation workflow lives in `src/data/target_pipeline.py` and reads from `data/processed/market_features.parquet`.
+
+See `docs/m4_target_preparation.md` for the saved output paths, rerun command, and invalid-row handling in the modeling dataset.
