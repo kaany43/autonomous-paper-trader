@@ -10,6 +10,9 @@ from src.data.loader import load_yaml
 
 REPO_ROOT = Path(__file__).resolve().parents[2]
 M4_TARGET_CONFIG_PATH = REPO_ROOT / "config" / "modeling" / "m4_target.yaml"
+TARGET_COLUMN_PREFIX = "target_"
+TARGET_DATE_COLUMN = "target_date"
+TARGET_VALID_COLUMN = "target_is_valid"
 
 
 @dataclass(frozen=True)
@@ -24,6 +27,8 @@ class OfficialTargetDefinition:
     price_column: str
     positive_return_threshold: float
     invalid_target_policy: str
+    feature_timestamp: str
+    target_timestamp: str
 
 
 def load_m4_target_definition(
@@ -47,6 +52,8 @@ def load_m4_target_definition(
         price_column=str(target_cfg.get("price_column", "")).strip(),
         positive_return_threshold=float(target_cfg.get("positive_return_threshold", 0.0) or 0.0),
         invalid_target_policy=str(target_cfg.get("invalid_target_policy", "")).strip(),
+        feature_timestamp=str(target_cfg.get("feature_timestamp", "")).strip(),
+        target_timestamp=str(target_cfg.get("target_timestamp", "")).strip(),
     )
 
     if definition.milestone != "M4":
@@ -65,6 +72,10 @@ def load_m4_target_definition(
         raise ValueError(
             "Official M4 invalid target handling must be 'null_and_exclude_from_training'."
         )
+    if not definition.feature_timestamp:
+        raise ValueError("feature_timestamp is required for the M4 target contract.")
+    if not definition.target_timestamp:
+        raise ValueError("target_timestamp is required for the M4 target contract.")
 
     return definition
 
@@ -93,7 +104,11 @@ def add_m4_target_columns(
         )
 
     normalized = df.copy()
-    normalized["date"] = pd.to_datetime(normalized["date"], errors="coerce").dt.tz_localize(None)
+    normalized["date"] = pd.to_datetime(
+        normalized["date"],
+        errors="coerce",
+        format="mixed",
+    ).dt.tz_localize(None)
     if normalized["date"].isna().any():
         raise ValueError("Target generation requires valid non-null date values.")
 
@@ -107,6 +122,10 @@ def add_m4_target_columns(
 
     grouped = normalized.groupby("symbol", group_keys=False)
     current_price = pd.to_numeric(normalized[target_definition.price_column], errors="coerce")
+    target_date = pd.to_datetime(
+        grouped["date"].shift(-target_definition.forecast_horizon_sessions),
+        errors="coerce",
+    )
     future_price = pd.to_numeric(
         grouped[target_definition.price_column].shift(-target_definition.forecast_horizon_sessions),
         errors="coerce",
@@ -132,6 +151,8 @@ def add_m4_target_columns(
             > target_definition.positive_return_threshold
         ).astype("int64")
 
+    normalized[TARGET_DATE_COLUMN] = target_date
+    normalized[TARGET_VALID_COLUMN] = valid_target.astype(bool)
     normalized[target_definition.helper_return_column] = helper_return
     normalized[target_definition.official_target_column] = official_target
 

@@ -6,7 +6,12 @@ from unittest.mock import patch
 import pandas as pd
 
 from src.data.features import add_basic_features
-from src.data.targets import add_m4_target_columns, load_m4_target_definition
+from src.data.targets import (
+    TARGET_DATE_COLUMN,
+    TARGET_VALID_COLUMN,
+    add_m4_target_columns,
+    load_m4_target_definition,
+)
 
 
 _ORIGINAL_SORT_VALUES = pd.DataFrame.sort_values
@@ -46,6 +51,8 @@ class M4TargetDefinitionTests(unittest.TestCase):
         self.assertEqual(self.definition.forecast_horizon_sessions, 1)
         self.assertEqual(self.definition.price_column, "adj_close")
         self.assertEqual(self.definition.invalid_target_policy, "null_and_exclude_from_training")
+        self.assertEqual(self.definition.feature_timestamp, "decision_session_close")
+        self.assertEqual(self.definition.target_timestamp, "next_tradable_session_close")
 
     def test_target_generation_is_reproducible_and_normalizes_unsorted_input(self) -> None:
         market = pd.DataFrame(
@@ -79,6 +86,8 @@ class M4TargetDefinitionTests(unittest.TestCase):
         aaa_start = first.loc[
             (first["symbol"] == "AAA") & (first["date"] == pd.Timestamp("2024-01-02"))
         ].iloc[0]
+        self.assertEqual(aaa_start[TARGET_DATE_COLUMN], pd.Timestamp("2024-01-03"))
+        self.assertTrue(bool(aaa_start[TARGET_VALID_COLUMN]))
         self.assertAlmostEqual(float(aaa_start[self.definition.helper_return_column]), (110.0 / 101.0) - 1.0)
         self.assertEqual(int(aaa_start[self.definition.official_target_column]), 1)
 
@@ -103,12 +112,18 @@ class M4TargetDefinitionTests(unittest.TestCase):
 
         self.assertAlmostEqual(float(aaa_row[self.definition.helper_return_column]), 0.2)
         self.assertEqual(int(aaa_row[self.definition.official_target_column]), 1)
+        self.assertEqual(aaa_row[TARGET_DATE_COLUMN], pd.Timestamp("2024-01-03"))
+        self.assertTrue(bool(aaa_row[TARGET_VALID_COLUMN]))
         self.assertAlmostEqual(float(bbb_row[self.definition.helper_return_column]), -0.2)
         self.assertEqual(int(bbb_row[self.definition.official_target_column]), 0)
+        self.assertEqual(bbb_row[TARGET_DATE_COLUMN], pd.Timestamp("2024-01-03"))
+        self.assertTrue(bool(bbb_row[TARGET_VALID_COLUMN]))
 
         aaa_last = result.loc[
             (result["symbol"] == "AAA") & (result["date"] == pd.Timestamp("2024-01-03"))
         ].iloc[0]
+        self.assertTrue(pd.isna(aaa_last[TARGET_DATE_COLUMN]))
+        self.assertFalse(bool(aaa_last[TARGET_VALID_COLUMN]))
         self.assertTrue(pd.isna(aaa_last[self.definition.helper_return_column]))
         self.assertTrue(pd.isna(aaa_last[self.definition.official_target_column]))
 
@@ -127,10 +142,11 @@ class M4TargetDefinitionTests(unittest.TestCase):
         result = add_m4_target_columns(market, self.definition)
 
         invalid_rows = result.loc[result["symbol"].isin(["AAA", "BBB", "CCC"])]
+        self.assertFalse(bool(invalid_rows[TARGET_VALID_COLUMN].any()))
         self.assertTrue(invalid_rows[self.definition.helper_return_column].isna().all())
         self.assertTrue(invalid_rows[self.definition.official_target_column].isna().all())
 
-    def test_add_basic_features_includes_the_official_target_schema(self) -> None:
+    def test_add_basic_features_keeps_target_generation_out_of_feature_source(self) -> None:
         market = pd.DataFrame(
             [
                 {
@@ -158,15 +174,7 @@ class M4TargetDefinitionTests(unittest.TestCase):
 
         features = add_basic_features(market)
 
-        self.assertIn(self.definition.helper_return_column, features.columns)
-        self.assertIn(self.definition.official_target_column, features.columns)
-        self.assertAlmostEqual(
-            float(features.iloc[0][self.definition.helper_return_column]),
-            0.1,
-        )
-        self.assertEqual(int(features.iloc[0][self.definition.official_target_column]), 1)
-        self.assertTrue(pd.isna(features.iloc[1][self.definition.helper_return_column]))
-        self.assertTrue(pd.isna(features.iloc[1][self.definition.official_target_column]))
+        self.assertFalse(any(column.startswith("target_") for column in features.columns))
 
     def test_target_generation_keeps_last_duplicate_from_input_order(self) -> None:
         market = pd.DataFrame(
@@ -185,6 +193,8 @@ class M4TargetDefinitionTests(unittest.TestCase):
         ].iloc[0]
 
         self.assertEqual(float(duplicate_row["adj_close"]), 11.0)
+        self.assertEqual(duplicate_row[TARGET_DATE_COLUMN], pd.Timestamp("2024-01-03"))
+        self.assertTrue(bool(duplicate_row[TARGET_VALID_COLUMN]))
         self.assertAlmostEqual(
             float(duplicate_row[self.definition.helper_return_column]),
             (13.0 / 11.0) - 1.0,
@@ -239,10 +249,6 @@ class M4TargetDefinitionTests(unittest.TestCase):
 
         self.assertEqual(float(duplicate_row["adj_close"]), 30.0)
         self.assertAlmostEqual(float(next_row["ret_1d"]), 1.0)
-        self.assertAlmostEqual(
-            float(duplicate_row[self.definition.helper_return_column]),
-            1.0,
-        )
 
 
 if __name__ == "__main__":
