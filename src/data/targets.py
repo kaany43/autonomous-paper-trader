@@ -99,8 +99,9 @@ def add_m4_target_columns(
 
     normalized["symbol"] = normalized["symbol"].astype(str).str.upper().str.strip()
     normalized = (
-        normalized.sort_values(["symbol", "date"])
-        .drop_duplicates(subset=["symbol", "date"], keep="last")
+        # Preserve keep-last ingestion semantics for duplicate symbol/date corrections.
+        normalized.drop_duplicates(subset=["symbol", "date"], keep="last")
+        .sort_values(["symbol", "date"])
         .reset_index(drop=True)
     )
 

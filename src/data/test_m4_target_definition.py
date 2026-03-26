@@ -1,11 +1,37 @@
 from __future__ import annotations
 
 import unittest
+from unittest.mock import patch
 
 import pandas as pd
 
 from src.data.features import add_basic_features
 from src.data.targets import add_m4_target_columns, load_m4_target_definition
+
+
+_ORIGINAL_SORT_VALUES = pd.DataFrame.sort_values
+
+
+def _reverse_duplicate_symbol_date_ties(
+    df: pd.DataFrame,
+    by: str | list[str] | tuple[str, ...] | None = None,
+    *args: object,
+    **kwargs: object,
+) -> pd.DataFrame:
+    sorted_df = _ORIGINAL_SORT_VALUES(df, by=by, *args, **kwargs)
+    by_columns = [by] if isinstance(by, str) else list(by or [])
+
+    if by_columns != ["symbol", "date"]:
+        return sorted_df
+
+    groups: list[pd.DataFrame] = []
+    for _, group in sorted_df.groupby(by_columns, sort=False, group_keys=False):
+        groups.append(group.iloc[::-1] if len(group) > 1 else group)
+
+    if not groups:
+        return sorted_df
+
+    return pd.concat(groups, axis=0)
 
 
 class M4TargetDefinitionTests(unittest.TestCase):
@@ -141,6 +167,82 @@ class M4TargetDefinitionTests(unittest.TestCase):
         self.assertEqual(int(features.iloc[0][self.definition.official_target_column]), 1)
         self.assertTrue(pd.isna(features.iloc[1][self.definition.helper_return_column]))
         self.assertTrue(pd.isna(features.iloc[1][self.definition.official_target_column]))
+
+    def test_target_generation_keeps_last_duplicate_from_input_order(self) -> None:
+        market = pd.DataFrame(
+            [
+                {"date": "2024-01-03", "symbol": "AAA", "adj_close": 13.0},
+                {"date": "2024-01-02", "symbol": "AAA", "adj_close": 10.0},
+                {"date": "2024-01-02", "symbol": "AAA", "adj_close": 11.0},
+            ]
+        )
+
+        with patch.object(pd.DataFrame, "sort_values", new=_reverse_duplicate_symbol_date_ties):
+            result = add_m4_target_columns(market, self.definition)
+
+        duplicate_row = result.loc[
+            (result["symbol"] == "AAA") & (result["date"] == pd.Timestamp("2024-01-02"))
+        ].iloc[0]
+
+        self.assertEqual(float(duplicate_row["adj_close"]), 11.0)
+        self.assertAlmostEqual(
+            float(duplicate_row[self.definition.helper_return_column]),
+            (13.0 / 11.0) - 1.0,
+        )
+        self.assertEqual(int(duplicate_row[self.definition.official_target_column]), 1)
+
+    def test_add_basic_features_keeps_last_duplicate_from_input_order(self) -> None:
+        market = pd.DataFrame(
+            [
+                {
+                    "date": "2024-01-03",
+                    "symbol": "AAA",
+                    "open": 60.0,
+                    "high": 60.0,
+                    "low": 60.0,
+                    "close": 60.0,
+                    "adj_close": 60.0,
+                    "volume": 1200,
+                },
+                {
+                    "date": "2024-01-02",
+                    "symbol": "AAA",
+                    "open": 20.0,
+                    "high": 20.0,
+                    "low": 20.0,
+                    "close": 20.0,
+                    "adj_close": 20.0,
+                    "volume": 1000,
+                },
+                {
+                    "date": "2024-01-02",
+                    "symbol": "AAA",
+                    "open": 30.0,
+                    "high": 30.0,
+                    "low": 30.0,
+                    "close": 30.0,
+                    "adj_close": 30.0,
+                    "volume": 1100,
+                },
+            ]
+        )
+
+        with patch.object(pd.DataFrame, "sort_values", new=_reverse_duplicate_symbol_date_ties):
+            features = add_basic_features(market)
+
+        duplicate_row = features.loc[
+            (features["symbol"] == "AAA") & (features["date"] == pd.Timestamp("2024-01-02"))
+        ].iloc[0]
+        next_row = features.loc[
+            (features["symbol"] == "AAA") & (features["date"] == pd.Timestamp("2024-01-03"))
+        ].iloc[0]
+
+        self.assertEqual(float(duplicate_row["adj_close"]), 30.0)
+        self.assertAlmostEqual(float(next_row["ret_1d"]), 1.0)
+        self.assertAlmostEqual(
+            float(duplicate_row[self.definition.helper_return_column]),
+            1.0,
+        )
 
 
 if __name__ == "__main__":

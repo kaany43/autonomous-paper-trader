@@ -31,8 +31,9 @@ def add_basic_features(df: pd.DataFrame) -> pd.DataFrame:
     df["date"] = pd.to_datetime(df["date"], errors="coerce").dt.tz_localize(None)
     df["symbol"] = df["symbol"].astype(str).str.upper().str.strip()
     df = (
-        df.sort_values(["symbol", "date"])
-        .drop_duplicates(subset=["symbol", "date"], keep="last")
+        # Keep the last ingested correction row for each symbol/date before ordering rows.
+        df.drop_duplicates(subset=["symbol", "date"], keep="last")
+        .sort_values(["symbol", "date"])
         .reset_index(drop=True)
     )
 
