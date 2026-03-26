@@ -11,6 +11,7 @@ if str(_PROJECT_ROOT) not in sys.path:
 import pandas as pd
 
 from src.data.loader import load_market_data
+from src.data.targets import add_m4_target_columns, load_m4_target_definition
 
 
 REPO_ROOT = Path(__file__).resolve().parents[2]
@@ -27,7 +28,14 @@ def add_basic_features(df: pd.DataFrame) -> pd.DataFrame:
         raise ValueError("Input dataframe is empty.")
 
     df = df.copy()
-    df = df.sort_values(["symbol", "date"]).reset_index(drop=True)
+    df["date"] = pd.to_datetime(df["date"], errors="coerce").dt.tz_localize(None)
+    df["symbol"] = df["symbol"].astype(str).str.upper().str.strip()
+    df = (
+        # Keep the last ingested correction row for each symbol/date before ordering rows.
+        df.drop_duplicates(subset=["symbol", "date"], keep="last")
+        .sort_values(["symbol", "date"])
+        .reset_index(drop=True)
+    )
 
     grouped = df.groupby("symbol", group_keys=False)
 
@@ -79,10 +87,8 @@ def add_basic_features(df: pd.DataFrame) -> pd.DataFrame:
     df["range_pos_20"] = (df["adj_close"] - df["rolling_low_20"]) / range_width
     df.loc[range_width == 0, "range_pos_20"] = pd.NA
 
-    # Forward target for future strategy/model work
-    # This is a LABEL, not an input feature.
-    df["target_ret_1d"] = grouped["adj_close"].shift(-1) / df["adj_close"] - 1.0
-    df["target_up_1d"] = (df["target_ret_1d"] > 0).astype("float")
+    # Labels are kept in the processed dataset for offline M4 supervision only.
+    df = add_m4_target_columns(df)
 
     return df
 
@@ -95,6 +101,8 @@ def save_features(df: pd.DataFrame) -> Path:
 
 
 def main() -> None:
+    target_definition = load_m4_target_definition()
+
     print("Loading raw market data...")
     df = load_market_data()
 
@@ -119,8 +127,8 @@ def main() -> None:
         "ma_50",
         "vol_20",
         "volume_ratio_20",
-        "target_ret_1d",
-        "target_up_1d",
+        target_definition.helper_return_column,
+        target_definition.official_target_column,
     ]
     print(features_df[preview_columns].head(10))
 
