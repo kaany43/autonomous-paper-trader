@@ -13,6 +13,7 @@ data/processed/*
 data/snapshots/*
 data/logs/*
 outputs/backtests/*
+outputs/predictions/*
 outputs/reports/*
 outputs/charts/*
 outputs/models/*
