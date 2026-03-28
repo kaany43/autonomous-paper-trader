@@ -113,6 +113,37 @@ def _format_date(value: Any) -> str | None:
     return pd.Timestamp(value).strftime("%Y-%m-%d")
 
 
+def _normalize_timestamp_series(series: pd.Series) -> pd.Series:
+    return pd.to_datetime(series, errors="coerce", format="mixed").dt.tz_localize(None)
+
+
+def _normalize_timestamp_series_to_date(series: pd.Series) -> pd.Series:
+    return _normalize_timestamp_series(series).dt.normalize()
+
+
+def _validate_binary_target_values(
+    values: pd.Series,
+    *,
+    column_name: str,
+) -> None:
+    numeric_values = pd.to_numeric(values, errors="coerce")
+    if numeric_values.isna().any():
+        raise ValueError(
+            f"M4 split requires '{column_name}' to contain only numeric 0/1 values."
+        )
+
+    if not bool((numeric_values == numeric_values.round()).all()):
+        raise ValueError(
+            f"M4 split requires '{column_name}' to contain exact integer 0/1 values."
+        )
+
+    observed_target_values = set(numeric_values.astype("int64").tolist())
+    if not observed_target_values.issubset({0, 1}):
+        raise ValueError(
+            f"M4 split requires '{column_name}' to contain only 0/1 values."
+        )
+
+
 def _is_sorted_by_symbol_date(
     df: pd.DataFrame,
     *,
@@ -149,16 +180,12 @@ def _prepare_split_input(
         )
 
     normalized = modeling_df.copy()
-    normalized[split_definition.feature_timestamp_column] = pd.to_datetime(
-        normalized[split_definition.feature_timestamp_column],
-        errors="coerce",
-        format="mixed",
-    ).dt.tz_localize(None)
-    normalized[split_definition.target_timestamp_column] = pd.to_datetime(
-        normalized[split_definition.target_timestamp_column],
-        errors="coerce",
-        format="mixed",
-    ).dt.tz_localize(None)
+    normalized[split_definition.feature_timestamp_column] = _normalize_timestamp_series(
+        normalized[split_definition.feature_timestamp_column]
+    )
+    normalized[split_definition.target_timestamp_column] = _normalize_timestamp_series(
+        normalized[split_definition.target_timestamp_column]
+    )
 
     if normalized[split_definition.feature_timestamp_column].isna().any():
         raise ValueError("M4 split requires valid non-null feature timestamps.")
@@ -188,14 +215,10 @@ def _prepare_split_input(
     if TARGET_VALID_COLUMN in normalized.columns and not bool(normalized[TARGET_VALID_COLUMN].all()):
         raise ValueError("M4 split requires target_is_valid to be true for every modeling row.")
 
-    observed_target_values = set(
-        pd.to_numeric(normalized[target_definition.official_target_column], errors="coerce")
-        .dropna()
-        .astype("int64")
-        .tolist()
+    _validate_binary_target_values(
+        normalized[target_definition.official_target_column],
+        column_name=target_definition.official_target_column,
     )
-    if not observed_target_values.issubset({0, 1}):
-        raise ValueError("M4 split requires the official target column to contain only 0/1 values.")
 
     input_was_sorted = _is_sorted_by_symbol_date(
         normalized,
@@ -237,14 +260,15 @@ def split_m4_modeling_dataset(
     feature_timestamp_column = resolved_split_definition.feature_timestamp_column
     validation_start = resolved_split_definition.validation_start_timestamp
     validation_end = resolved_split_definition.validation_end_timestamp
+    target_dates = _normalize_timestamp_series_to_date(prepared_df[target_timestamp_column])
 
-    train_mask = prepared_df[target_timestamp_column] < validation_start
-    validation_mask = prepared_df[target_timestamp_column].between(
+    train_mask = target_dates < validation_start
+    validation_mask = target_dates.between(
         validation_start,
         validation_end,
         inclusive="both",
     )
-    excluded_mask = prepared_df[target_timestamp_column] > validation_end
+    excluded_mask = target_dates > validation_end
 
     train_df = prepared_df.loc[train_mask].reset_index(drop=True)
     validation_df = prepared_df.loc[validation_mask].reset_index(drop=True)
@@ -260,7 +284,10 @@ def split_m4_modeling_dataset(
             "Configured M4 split leaves the validation partition empty inside "
             f"{validation_start.strftime('%Y-%m-%d')} -> {validation_end.strftime('%Y-%m-%d')}."
         )
-    if not bool(train_df[target_timestamp_column].max() < validation_df[target_timestamp_column].min()):
+    if not bool(
+        _normalize_timestamp_series_to_date(train_df[target_timestamp_column]).max()
+        < _normalize_timestamp_series_to_date(validation_df[target_timestamp_column]).min()
+    ):
         raise ValueError("M4 split failed to keep training targets strictly before validation targets.")
 
     summary = {

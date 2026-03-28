@@ -234,6 +234,62 @@ class M4TrainValidationSplitTests(unittest.TestCase):
                 target_definition=self.target_definition,
             )
 
+    def test_split_rejects_non_binary_or_non_numeric_target_labels(self) -> None:
+        modeling = self._build_modeling_dataset()
+        modeling["target_next_session_direction"] = modeling["target_next_session_direction"].astype(object)
+
+        modeling.loc[0, "target_next_session_direction"] = 0.7
+        with self.assertRaisesRegex(ValueError, "exact integer 0/1 values"):
+            split_m4_modeling_dataset(
+                modeling,
+                split_definition=self.split_definition,
+                target_definition=self.target_definition,
+            )
+
+        modeling = self._build_modeling_dataset()
+        modeling["target_next_session_direction"] = modeling["target_next_session_direction"].astype(object)
+        modeling.loc[0, "target_next_session_direction"] = "bad-label"
+        with self.assertRaisesRegex(ValueError, "numeric 0/1 values"):
+            split_m4_modeling_dataset(
+                modeling,
+                split_definition=self.split_definition,
+                target_definition=self.target_definition,
+            )
+
+    def test_split_compares_validation_window_on_normalized_dates(self) -> None:
+        modeling = self._build_modeling_dataset().copy()
+        modeling["date"] = pd.to_datetime(modeling["date"]) + pd.Timedelta(hours=16)
+        modeling["target_date"] = pd.to_datetime(modeling["target_date"]) + pd.Timedelta(hours=16)
+
+        train_df, validation_df, summary = split_m4_modeling_dataset(
+            modeling,
+            split_definition=self.split_definition,
+            target_definition=self.target_definition,
+        )
+
+        self.assertEqual(summary["validation_row_count"], 4)
+        self.assertEqual(summary["excluded_future_row_count"], 2)
+        self.assertTrue(
+            bool(
+                (
+                    validation_df["target_date"].dt.normalize()
+                    <= self.split_definition.validation_end_timestamp
+                ).all()
+            )
+        )
+        self.assertIn(
+            pd.Timestamp("2024-01-05 16:00:00"),
+            validation_df["target_date"].tolist(),
+        )
+        self.assertEqual(
+            summary["validation_target_date_end"],
+            "2024-01-05",
+        )
+        self.assertLess(
+            train_df["target_date"].dt.normalize().max(),
+            validation_df["target_date"].dt.normalize().min(),
+        )
+
     def test_run_split_writes_loadable_outputs_and_metadata(self) -> None:
         modeling = self._build_modeling_dataset()
 
