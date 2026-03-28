@@ -1,0 +1,31 @@
+training:
+  milestone: M4
+  contract_name: m4_official_tabular_baseline_training
+  version: 1
+  modeling_dataset_path: data/processed/m4_modeling_dataset.parquet
+  modeling_dataset_metadata_path: data/processed/m4_modeling_dataset.metadata.json
+  split_config_path: config/modeling/m4_split.yaml
+  split_metadata_path: data/processed/m4_train_validation_split.metadata.json
+  output_dir: outputs/models
+  strategy_name: M4BaselineTabularModels
+  run_label: m4-baselines
+  target_column: target_next_session_direction
+  metrics:
+    - accuracy
+    - precision
+    - recall
+    - f1
+  models:
+    - name: logistic_regression
+      estimator: logistic_regression
+      params:
+        C: 1.0
+        solver: liblinear
+        max_iter: 1000
+        random_state: 42
+    - name: decision_tree
+      estimator: decision_tree_classifier
+      params:
+        max_depth: 4
+        min_samples_leaf: 100
+        random_state: 42

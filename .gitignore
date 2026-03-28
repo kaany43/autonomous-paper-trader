@@ -15,6 +15,7 @@ data/logs/*
 outputs/backtests/*
 outputs/reports/*
 outputs/charts/*
+outputs/models/*
 
 !.gitkeep
 
