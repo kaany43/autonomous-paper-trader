@@ -67,4 +67,6 @@ python -m src.data.target_pipeline --input data/processed/market_features.parque
 ## Relationship to later ML steps
 
 - Later splitting and training steps should consume `data/processed/m4_modeling_dataset.parquet`.
+- The official holdout split is documented in `docs/m4_train_validation_split.md`.
+- The split entrypoint is `python -m src.data.split_pipeline`, which writes reusable train/validation parquet files plus split metadata.
 - Later live or simulation workflows should continue using `data/processed/market_features.parquet`, which remains free of inline target columns.

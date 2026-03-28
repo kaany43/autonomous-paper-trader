@@ -64,13 +64,20 @@ python -m src.engine.comparison_runner --config config/evaluation/m3_protocol.ya
 
 ## M4 Data Preparation
 
-The official M4 target contract and the dedicated target-preparation pipeline are documented here:
+The official M4 target contract, preparation pipeline, and time-aware holdout split are documented here:
 
 - `docs/m4_target_definition.md`
 - `docs/m4_target_preparation.md`
+- `docs/m4_train_validation_split.md`
 
 Prepare the modeling dataset from the reusable processed feature parquet with:
 
 ```bash
 python -m src.data.target_pipeline
+```
+
+Create the official M4 train/validation split with:
+
+```bash
+python -m src.data.split_pipeline
 ```

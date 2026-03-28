@@ -45,6 +45,7 @@ Zero return is treated as non-positive and therefore maps to class `0`.
 - Target generation uses a per-symbol forward shift after sorting, so the row at `t` never uses prices from `t+1` as input features.
 - The simulator already strips all `target_` columns before strategy execution, which keeps model labels out of live decision inputs.
 - The dedicated preparation step also records `target_date` and `target_is_valid` so alignment remains auditable in the saved modeling dataset.
+- The official M4 holdout split uses `target_date` as its boundary anchor so near-cutoff rows cannot leak next-session labels into training.
 
 ## Missing and invalid target handling
 
@@ -67,3 +68,4 @@ The current project operates on daily processed bars and current simulator code 
 The reproducible target-preparation workflow lives in `src/data/target_pipeline.py` and reads from `data/processed/market_features.parquet`.
 
 See `docs/m4_target_preparation.md` for the saved output paths, rerun command, and invalid-row handling in the modeling dataset.
+See `docs/m4_train_validation_split.md` for the official train/validation holdout contract that consumes the prepared modeling dataset.
