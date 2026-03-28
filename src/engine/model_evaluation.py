@@ -16,6 +16,7 @@ from src.strategy.ml_baselines import (
     BaselineModelSpec,
     OfficialM4BaselineTrainingDefinition,
     SUPPORTED_METRICS,
+    build_dataframe_signature,
     load_trained_baseline_model,
     prepare_m4_baseline_training_data,
 )
@@ -332,6 +333,21 @@ def run_m4_baseline_evaluation(
             raise ValueError(
                 "Rebuilt validation partition does not match the stored training summary row count."
             )
+    expected_validation_signature = str(
+        training_bundle["split_summary"].get("validation_dataset_signature")
+        or summary_split.get("validation_dataset_signature")
+        or ""
+    ).strip()
+    if not expected_validation_signature:
+        raise ValueError(
+            "Training artifacts are missing validation_dataset_signature; rerun baseline training to "
+            "enable immutable validation dataset checks."
+        )
+    rebuilt_validation_signature = build_dataframe_signature(validation_df)
+    if rebuilt_validation_signature != expected_validation_signature:
+        raise ValueError(
+            "Rebuilt validation partition signature does not match the stored training artifacts."
+        )
 
     schema_feature_columns = [str(column) for column in feature_schema.get("feature_columns", [])]
     if schema_feature_columns != [str(column) for column in feature_columns]:

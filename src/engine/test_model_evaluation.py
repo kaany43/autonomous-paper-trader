@@ -296,6 +296,35 @@ class M4BaselineEvaluationTests(unittest.TestCase):
                     evaluation_definition=evaluation_definition,
                 )
 
+    def test_evaluation_fails_when_validation_dataset_signature_changes(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp_dir:
+            tmp_path = Path(tmp_dir)
+            training_result, training_definition = self._create_training_run(tmp_path)
+
+            mutated_df = pd.read_parquet(training_definition.modeling_dataset_path).copy()
+            validation_target_dates = mutated_df["target_date"].between(
+                self.split_definition.validation_start_date,
+                self.split_definition.validation_end_date,
+            )
+            self.assertTrue(validation_target_dates.any())
+            mutated_df.loc[validation_target_dates, "open"] = (
+                pd.to_numeric(mutated_df.loc[validation_target_dates, "open"], errors="coerce") + 0.5
+            )
+            mutated_df.to_parquet(training_definition.modeling_dataset_path, index=False)
+
+            evaluation_definition = replace(
+                self.evaluation_definition,
+                output_dir=str(tmp_path / "outputs" / "reports" / "model_evaluations"),
+            )
+            with self.assertRaisesRegex(
+                ValueError,
+                "Rebuilt validation partition signature does not match the stored training artifacts",
+            ):
+                run_m4_baseline_evaluation(
+                    training_summary_path=Path(str(training_result["training_summary_path"])),
+                    evaluation_definition=evaluation_definition,
+                )
+
 
 if __name__ == "__main__":
     unittest.main()
