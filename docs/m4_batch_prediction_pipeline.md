@@ -43,5 +43,6 @@ Each batch prediction run writes a self-contained directory under `outputs/predi
 - `manifest.json`
 - `baseline_prediction_summary.json`
 - `baseline_model_predictions.parquet`
+- `baseline_model_predictions.metadata.json`
 
-The parquet artifact keeps one row per model per validation row. Rows are sorted by `model_name`, `symbol`, and `date` so later simulation code can reload predictions deterministically and map them back to the original asset/time keys.
+The parquet artifact is the official simulation-ready model output log. Each row keeps model provenance, run provenance, timestamps, asset identifiers, and prediction values. The metadata sidecar records the logging contract, source artifacts, split references, and output signature so later simulation code can reload the predictions deterministically without reconstructing notebook assumptions.

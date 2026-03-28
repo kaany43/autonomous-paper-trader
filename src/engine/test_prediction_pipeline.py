@@ -16,6 +16,7 @@ from src.data.modeling_dataset import (
 )
 from src.data.splits import load_m4_split_definition
 from src.data.targets import load_m4_target_definition
+from src.data.prediction_logs import load_m4_prediction_log_bundle
 from src.engine.prediction_pipeline import (
     load_m4_batch_prediction_definition,
     run_m4_batch_prediction,
@@ -144,14 +145,29 @@ class M4BatchPredictionTests(unittest.TestCase):
             self.assertTrue(result["manifest_path"].exists())
             self.assertTrue(result["summary_json_path"].exists())
             self.assertTrue(result["predictions_path"].exists())
+            self.assertTrue(result["prediction_log_metadata_path"].exists())
 
-            prediction_df = pd.read_parquet(result["predictions_path"])
+            bundle = load_m4_prediction_log_bundle(
+                dataset_path=Path(str(result["predictions_path"])),
+                metadata_path=Path(str(result["prediction_log_metadata_path"])),
+            )
+            prediction_df = bundle["dataframe"]
             self.assertEqual(result["prediction_row_count"], len(prediction_df))
             self.assertEqual(sorted(prediction_df["model_name"].unique().tolist()), ["decision_tree", "logistic_regression"])
+            self.assertIn("model_artifact_path", prediction_df.columns)
+            self.assertIn("prediction_run_id", prediction_df.columns)
 
             summary = json.loads(Path(result["summary_json_path"]).read_text(encoding="utf-8"))
             self.assertEqual(summary["model_count"], 2)
             self.assertEqual(summary["prediction_output"]["format"], "parquet")
+            self.assertEqual(
+                summary["prediction_output"]["metadata_path"],
+                str(result["prediction_log_metadata_path"]),
+            )
+            self.assertEqual(
+                bundle["metadata"]["prediction_context"]["prediction_run_id"],
+                result["run_id"],
+            )
 
             refreshed_mtimes = {
                 record["model_name"]: Path(record["artifact_path"]).stat().st_mtime_ns
@@ -208,7 +224,11 @@ class M4BatchPredictionTests(unittest.TestCase):
 
             first_df = pd.read_parquet(first["predictions_path"])
             second_df = pd.read_parquet(second["predictions_path"])
-            pd.testing.assert_frame_equal(first_df, second_df)
+            comparable_columns = [column for column in first_df.columns if column != "prediction_run_id"]
+            pd.testing.assert_frame_equal(
+                first_df.loc[:, comparable_columns],
+                second_df.loc[:, comparable_columns],
+            )
 
     def test_feature_schema_mismatch_fails_clearly(self) -> None:
         with tempfile.TemporaryDirectory() as tmp_dir:

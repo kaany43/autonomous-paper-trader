@@ -1,0 +1,36 @@
+logging:
+  milestone: M4
+  contract_name: m4_official_model_output_log
+  version: 1
+  output_filename: baseline_model_predictions.parquet
+  metadata_filename: baseline_model_predictions.metadata.json
+  identifier_columns:
+    - symbol
+  feature_timestamp_column: date
+  target_timestamp_column: target_date
+  run_identity_columns:
+    - prediction_run_id
+    - training_run_id
+    - inference_partition
+  model_identity_columns:
+    - model_name
+    - estimator
+    - model_artifact_path
+    - model_metadata_path
+  prediction_context_columns:
+    - target_column
+    - task_type
+  prediction_value_columns:
+    - predicted_class
+    - predicted_probability
+  join_key_columns:
+    - model_name
+    - symbol
+    - date
+    - target_date
+  sort_order:
+    - model_name
+    - symbol
+    - date
+    - target_date
+  duplicate_row_policy: reject_duplicate_model_prediction_rows
