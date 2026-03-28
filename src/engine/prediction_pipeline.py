@@ -10,6 +10,15 @@ import pandas as pd
 from sklearn.pipeline import Pipeline
 
 from src.data.loader import load_yaml
+from src.data.prediction_logs import (
+    M4_PREDICTION_LOG_CONFIG_PATH,
+    build_m4_prediction_log_signature,
+    build_m4_prediction_log_metadata,
+    load_m4_prediction_log_definition,
+    normalize_m4_prediction_log,
+    save_m4_prediction_log,
+    validate_m4_prediction_log_contract,
+)
 from src.engine.model_evaluation import load_m4_baseline_training_run_bundle
 from src.engine.run_artifacts import RunArtifactManager
 from src.strategy.ml_baselines import (
@@ -22,7 +31,6 @@ from src.data.splits import OfficialM4SplitDefinition
 
 REPO_ROOT = Path(__file__).resolve().parents[2]
 M4_BATCH_PREDICTION_CONFIG_PATH = REPO_ROOT / "config" / "evaluation" / "m4_batch_prediction.yaml"
-BATCH_PREDICTIONS_FILENAME = "baseline_model_predictions.parquet"
 BATCH_PREDICTION_SUMMARY_FILENAME = "baseline_prediction_summary.json"
 PIPELINE_VERSION = 1
 
@@ -196,6 +204,7 @@ def run_m4_batch_prediction(
     split_summary = prepared["split_summary"]
     feature_columns = prepared["feature_columns"]
     feature_schema = training_bundle["feature_schema"]
+    prediction_log_definition = load_m4_prediction_log_definition()
 
     summary_split = training_bundle["training_summary"].get("official_split", {}).get("summary", {})
     if summary_split:
@@ -248,6 +257,7 @@ def run_m4_batch_prediction(
 
     config_snapshot = {
         "prediction_definition": asdict(resolved_prediction_definition),
+        "prediction_log_config_path": str(M4_PREDICTION_LOG_CONFIG_PATH),
         "training_summary_path": str(training_bundle["training_summary_path"]),
         "training_config_snapshot_path": str(training_bundle["training_config_snapshot_path"]),
         "training_run_id": training_bundle["training_summary"].get("run_id", ""),
@@ -313,7 +323,13 @@ def run_m4_batch_prediction(
             predicted_probability = _extract_positive_class_probability(model, x_inference)
 
             model_predictions = inference_df.loc[:, inference_key_columns].copy()
+            model_predictions["prediction_run_id"] = manager.run_id
+            model_predictions["training_run_id"] = str(training_bundle["training_summary"].get("run_id", ""))
+            model_predictions["inference_partition"] = resolved_prediction_definition.inference_partition
             model_predictions["model_name"] = model_name
+            model_predictions["estimator"] = str(model_metadata.get("estimator", "")).strip()
+            model_predictions["model_artifact_path"] = str(model_artifact_path)
+            model_predictions["model_metadata_path"] = str(model_metadata_path)
             model_predictions["target_column"] = training_bundle["training_definition"].target_column
             model_predictions["task_type"] = task_type
             model_predictions["predicted_class"] = predicted_class.astype("int64")
@@ -322,7 +338,13 @@ def run_m4_batch_prediction(
                 model_predictions.loc[
                     :,
                     [
+                        "prediction_run_id",
+                        "training_run_id",
+                        "inference_partition",
                         "model_name",
+                        "estimator",
+                        "model_artifact_path",
+                        "model_metadata_path",
                         *inference_key_columns,
                         "target_column",
                         "task_type",
@@ -353,11 +375,54 @@ def run_m4_batch_prediction(
             ["model_name", *inference_key_columns]
         ).reset_index(drop=True)
 
-        predictions_path = manager.artifact_path(BATCH_PREDICTIONS_FILENAME)
-        predictions_df.to_parquet(predictions_path, index=False)
-        manager.register_artifact("batch_predictions", predictions_path)
+        normalized_prediction_log = normalize_m4_prediction_log(
+            predictions_df,
+            prediction_log_definition,
+        )
+        validate_m4_prediction_log_contract(
+            normalized_prediction_log,
+            prediction_log_definition,
+        )
+        output_signature = build_m4_prediction_log_signature(
+            normalized_prediction_log,
+            prediction_log_definition,
+        )
+        predictions_path = manager.artifact_path(prediction_log_definition.output_filename)
+        prediction_log_metadata_path = manager.artifact_path(prediction_log_definition.metadata_filename)
+        prediction_log_metadata = build_m4_prediction_log_metadata(
+            output_path=predictions_path,
+            metadata_path=prediction_log_metadata_path,
+            prediction_log_df=normalized_prediction_log,
+            definition=prediction_log_definition,
+            prediction_run_id=manager.run_id,
+            training_run_id=str(training_bundle["training_summary"].get("run_id", "")),
+            training_summary_path=training_bundle["training_summary_path"],
+            training_output_dir=training_bundle["training_run_dir"],
+            feature_schema_path=training_bundle["feature_schema_path"],
+            split_summary_path=training_bundle["split_summary_path"],
+            prediction_config_path=config_path,
+            source_dataset_path=prepared["dataset_path"],
+            source_dataset_metadata_path=prepared["dataset_metadata_path"],
+            split_config_path=prepared["split_config_path"],
+            split_metadata_path=prepared["split_metadata_path"],
+            split_summary=split_summary,
+            logged_output_signature=output_signature,
+            source_models=model_summaries,
+            inference_partition=resolved_prediction_definition.inference_partition,
+            target_column=training_bundle["training_definition"].target_column,
+            task_type=task_type,
+            inference_key_columns=inference_key_columns,
+        )
+        save_m4_prediction_log(
+            normalized_prediction_log,
+            output_path=predictions_path,
+            metadata=prediction_log_metadata,
+            metadata_path=prediction_log_metadata_path,
+            definition=prediction_log_definition,
+        )
+        manager.register_artifact("prediction_log", predictions_path)
+        manager.register_artifact("prediction_log_metadata", prediction_log_metadata_path)
 
-        output_signature = build_dataframe_signature(predictions_df)
         summary_payload = {
             "pipeline_name": "m4_baseline_batch_prediction",
             "pipeline_version": PIPELINE_VERSION,
@@ -395,12 +460,14 @@ def run_m4_batch_prediction(
             },
             "prediction_output": {
                 "path": str(predictions_path),
+                "metadata_path": str(prediction_log_metadata_path),
                 "format": "parquet",
-                "row_count": int(len(predictions_df)),
-                "columns": [str(column) for column in predictions_df.columns],
+                "row_count": int(len(normalized_prediction_log)),
+                "columns": [str(column) for column in normalized_prediction_log.columns],
                 "sort_order": ["model_name", *inference_key_columns],
                 "prediction_output_signature": output_signature,
                 "positive_probability_semantics": "Probability that target_next_session_direction == 1.",
+                "official_logging_contract": prediction_log_definition.contract_name,
             },
             "model_count": len(model_summaries),
             "models": model_summaries,
@@ -425,6 +492,7 @@ def run_m4_batch_prediction(
         "manifest_path": manifest_path,
         "summary_json_path": summary_json_path,
         "predictions_path": predictions_path,
+        "prediction_log_metadata_path": prediction_log_metadata_path,
         "model_count": len(model_summaries),
-        "prediction_row_count": int(len(predictions_df)),
+        "prediction_row_count": int(len(normalized_prediction_log)),
     }

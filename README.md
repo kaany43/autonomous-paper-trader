@@ -73,6 +73,7 @@ The official M4 target contract, modeling dataset export, preparation pipeline, 
 - `docs/m4_baseline_training.md`
 - `docs/m4_baseline_evaluation_reports.md`
 - `docs/m4_batch_prediction_pipeline.md`
+- `docs/m4_model_output_logging.md`
 
 Prepare the modeling dataset from the reusable processed feature parquet with:
 
