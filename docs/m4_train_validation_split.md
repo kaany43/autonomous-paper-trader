@@ -2,6 +2,8 @@
 
 This document defines the single official holdout split for the first M4 baseline-model workflow.
 
+The source parquet consumed here is the official modeling dataset described in `docs/m4_modeling_dataset.md`.
+
 ## Source and outputs
 
 - **Source modeling dataset:** `data/processed/m4_modeling_dataset.parquet`

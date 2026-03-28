@@ -1,0 +1,49 @@
+dataset:
+  milestone: M4
+  contract_name: m4_official_modeling_dataset
+  version: 1
+  source_feature_dataset_path: data/processed/market_features.parquet
+  output_dataset_path: data/processed/m4_modeling_dataset.parquet
+  metadata_output_path: data/processed/m4_modeling_dataset.metadata.json
+  identifier_columns:
+    - symbol
+  feature_timestamp_column: date
+  target_timestamp_column: target_date
+  target_valid_column: target_is_valid
+  passthrough_feature_columns:
+    - open
+    - high
+    - low
+    - close
+    - adj_close
+    - volume
+    - dividends
+    - stock_splits
+  engineered_feature_columns:
+    - ret_1d
+    - ret_5d
+    - ret_10d
+    - ma_10
+    - ma_20
+    - ma_50
+    - vol_20
+    - volume_change_1d
+    - volume_ma_20
+    - volume_ratio_20
+    - price_vs_ma10
+    - price_vs_ma20
+    - price_vs_ma50
+    - ma10_vs_ma20
+    - ma20_vs_ma50
+    - rolling_high_20
+    - rolling_low_20
+    - range_pos_20
+  split_ready_sort_order:
+    - symbol
+    - date
+  inference_key_columns:
+    - symbol
+    - date
+    - target_date
+  duplicate_row_policy: keep_last_before_sort_then_reject_duplicates_in_export
+  invalid_target_row_policy: drop_rows_where_target_is_valid_is_false

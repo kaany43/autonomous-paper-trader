@@ -64,9 +64,10 @@ python -m src.engine.comparison_runner --config config/evaluation/m3_protocol.ya
 
 ## M4 Data Preparation
 
-The official M4 target contract, preparation pipeline, and time-aware holdout split are documented here:
+The official M4 target contract, modeling dataset export, preparation pipeline, and time-aware holdout split are documented here:
 
 - `docs/m4_target_definition.md`
+- `docs/m4_modeling_dataset.md`
 - `docs/m4_target_preparation.md`
 - `docs/m4_train_validation_split.md`
 
