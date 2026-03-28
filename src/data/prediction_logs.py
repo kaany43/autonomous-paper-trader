@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import hashlib
 import json
 from dataclasses import asdict, dataclass
 from datetime import datetime, timezone
@@ -48,8 +49,25 @@ def _jsonable(value: Any) -> Any:
     return value
 
 
+def _normalize_timestamp_value(value: Any) -> pd.Timestamp | pd.NaT:
+    if value is None or pd.isna(value):
+        return pd.NaT
+    try:
+        parsed = pd.Timestamp(value)
+    except Exception:
+        return pd.NaT
+
+    if parsed.tzinfo is not None:
+        try:
+            return parsed.tz_localize(None)
+        except TypeError:
+            return parsed.tz_convert(None).tz_localize(None)
+    return parsed
+
+
 def _normalize_timestamp_series(series: pd.Series) -> pd.Series:
-    return pd.to_datetime(series, errors="coerce", format="mixed").dt.tz_localize(None)
+    normalized = series.map(_normalize_timestamp_value)
+    return pd.to_datetime(normalized, errors="coerce")
 
 
 def _ordered_unique_strings(values: list[Any]) -> tuple[str, ...]:
@@ -198,6 +216,22 @@ def build_m4_prediction_log_schema(
         "official_sort_order": list(resolved_definition.sort_order),
         "column_order": get_m4_prediction_log_column_order(resolved_definition),
     }
+
+
+def build_m4_prediction_log_signature(
+    prediction_log_df: pd.DataFrame,
+    definition: OfficialM4PredictionLogDefinition | None = None,
+) -> str:
+    resolved_definition = definition or load_m4_prediction_log_definition()
+    normalized = normalize_m4_prediction_log(prediction_log_df, resolved_definition)
+    validate_m4_prediction_log_contract(normalized, resolved_definition)
+    normalized = normalized.reset_index(drop=True)
+    row_hashes = pd.util.hash_pandas_object(normalized, index=False, categorize=False)
+    digest = hashlib.sha256()
+    digest.update("\x1f".join(str(column) for column in normalized.columns).encode("utf-8"))
+    digest.update("\x1f".join(str(dtype) for dtype in normalized.dtypes).encode("utf-8"))
+    digest.update(row_hashes.to_numpy(dtype="uint64", copy=False).tobytes())
+    return digest.hexdigest()
 
 
 def normalize_m4_prediction_log(

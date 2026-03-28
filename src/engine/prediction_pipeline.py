@@ -12,9 +12,12 @@ from sklearn.pipeline import Pipeline
 from src.data.loader import load_yaml
 from src.data.prediction_logs import (
     M4_PREDICTION_LOG_CONFIG_PATH,
+    build_m4_prediction_log_signature,
     build_m4_prediction_log_metadata,
     load_m4_prediction_log_definition,
+    normalize_m4_prediction_log,
     save_m4_prediction_log,
+    validate_m4_prediction_log_contract,
 )
 from src.engine.model_evaluation import load_m4_baseline_training_run_bundle
 from src.engine.run_artifacts import RunArtifactManager
@@ -372,13 +375,24 @@ def run_m4_batch_prediction(
             ["model_name", *inference_key_columns]
         ).reset_index(drop=True)
 
-        output_signature = build_dataframe_signature(predictions_df)
+        normalized_prediction_log = normalize_m4_prediction_log(
+            predictions_df,
+            prediction_log_definition,
+        )
+        validate_m4_prediction_log_contract(
+            normalized_prediction_log,
+            prediction_log_definition,
+        )
+        output_signature = build_m4_prediction_log_signature(
+            normalized_prediction_log,
+            prediction_log_definition,
+        )
         predictions_path = manager.artifact_path(prediction_log_definition.output_filename)
         prediction_log_metadata_path = manager.artifact_path(prediction_log_definition.metadata_filename)
         prediction_log_metadata = build_m4_prediction_log_metadata(
             output_path=predictions_path,
             metadata_path=prediction_log_metadata_path,
-            prediction_log_df=predictions_df,
+            prediction_log_df=normalized_prediction_log,
             definition=prediction_log_definition,
             prediction_run_id=manager.run_id,
             training_run_id=str(training_bundle["training_summary"].get("run_id", "")),
@@ -400,7 +414,7 @@ def run_m4_batch_prediction(
             inference_key_columns=inference_key_columns,
         )
         save_m4_prediction_log(
-            predictions_df,
+            normalized_prediction_log,
             output_path=predictions_path,
             metadata=prediction_log_metadata,
             metadata_path=prediction_log_metadata_path,
@@ -448,8 +462,8 @@ def run_m4_batch_prediction(
                 "path": str(predictions_path),
                 "metadata_path": str(prediction_log_metadata_path),
                 "format": "parquet",
-                "row_count": int(len(predictions_df)),
-                "columns": [str(column) for column in predictions_df.columns],
+                "row_count": int(len(normalized_prediction_log)),
+                "columns": [str(column) for column in normalized_prediction_log.columns],
                 "sort_order": ["model_name", *inference_key_columns],
                 "prediction_output_signature": output_signature,
                 "positive_probability_semantics": "Probability that target_next_session_direction == 1.",
@@ -480,5 +494,5 @@ def run_m4_batch_prediction(
         "predictions_path": predictions_path,
         "prediction_log_metadata_path": prediction_log_metadata_path,
         "model_count": len(model_summaries),
-        "prediction_row_count": int(len(predictions_df)),
+        "prediction_row_count": int(len(normalized_prediction_log)),
     }

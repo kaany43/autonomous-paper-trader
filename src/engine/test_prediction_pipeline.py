@@ -17,6 +17,7 @@ from src.data.modeling_dataset import (
 from src.data.splits import load_m4_split_definition
 from src.data.targets import load_m4_target_definition
 from src.data.prediction_logs import load_m4_prediction_log_bundle
+from src.data.prediction_logs import build_m4_prediction_log_signature
 from src.engine.prediction_pipeline import (
     load_m4_batch_prediction_definition,
     run_m4_batch_prediction,
@@ -165,8 +166,16 @@ class M4BatchPredictionTests(unittest.TestCase):
                 str(result["prediction_log_metadata_path"]),
             )
             self.assertEqual(
+                summary["prediction_output"]["prediction_output_signature"],
+                build_m4_prediction_log_signature(prediction_df),
+            )
+            self.assertEqual(
                 bundle["metadata"]["prediction_context"]["prediction_run_id"],
                 result["run_id"],
+            )
+            self.assertEqual(
+                bundle["metadata"]["output_log"]["output_signature"],
+                summary["prediction_output"]["prediction_output_signature"],
             )
 
             refreshed_mtimes = {

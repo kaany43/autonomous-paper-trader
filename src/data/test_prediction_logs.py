@@ -8,6 +8,7 @@ from pathlib import Path
 import pandas as pd
 
 from src.data.prediction_logs import (
+    build_m4_prediction_log_signature,
     build_m4_prediction_log_metadata,
     build_m4_prediction_log_schema,
     get_m4_prediction_log_column_order,
@@ -127,6 +128,59 @@ class M4PredictionLogTests(unittest.TestCase):
             self.assertEqual(bundle["metadata"]["output_log"]["row_count"], 2)
             self.assertEqual(bundle["schema"]["join_key_columns"], ["model_name", "symbol", "date", "target_date"])
 
+    def test_prediction_log_signature_matches_persisted_normalized_output(self) -> None:
+        prediction_log = self._build_prediction_log().copy()
+        prediction_log.loc[0, "symbol"] = " aaa "
+        prediction_log.loc[0, "model_name"] = " logistic_regression "
+        normalized_prediction_log = normalize_m4_prediction_log(prediction_log, self.definition)
+        output_signature = build_m4_prediction_log_signature(prediction_log, self.definition)
+
+        with tempfile.TemporaryDirectory() as tmp_dir:
+            tmp_path = Path(tmp_dir)
+            output_path = tmp_path / self.definition.output_filename
+            metadata_path = tmp_path / self.definition.metadata_filename
+            metadata = build_m4_prediction_log_metadata(
+                output_path=output_path,
+                metadata_path=metadata_path,
+                prediction_log_df=normalized_prediction_log,
+                definition=self.definition,
+                prediction_run_id="m4-batch-predictions-20260328T111402Z",
+                training_run_id="m4-baselines-20260328T101639Z",
+                training_summary_path=tmp_path / "baseline_training_summary.json",
+                training_output_dir=tmp_path / "training_run",
+                feature_schema_path=tmp_path / "feature_schema.json",
+                split_summary_path=tmp_path / "split_summary.json",
+                prediction_config_path=tmp_path / "m4_batch_prediction.yaml",
+                source_dataset_path=tmp_path / "m4_modeling_dataset.parquet",
+                source_dataset_metadata_path=tmp_path / "m4_modeling_dataset.metadata.json",
+                split_config_path=tmp_path / "m4_split.yaml",
+                split_metadata_path=tmp_path / "m4_train_validation_split.metadata.json",
+                split_summary={"validation_row_count": 2},
+                logged_output_signature=output_signature,
+                source_models=[],
+                inference_partition="validation",
+                target_column="target_next_session_direction",
+                task_type="classification",
+                inference_key_columns=["symbol", "date", "target_date"],
+            )
+            save_m4_prediction_log(
+                prediction_log,
+                output_path=output_path,
+                metadata=metadata,
+                metadata_path=metadata_path,
+                definition=self.definition,
+            )
+
+            bundle = load_m4_prediction_log_bundle(
+                dataset_path=output_path,
+                metadata_path=metadata_path,
+            )
+            self.assertEqual(
+                bundle["metadata"]["output_log"]["output_signature"],
+                build_m4_prediction_log_signature(bundle["dataframe"], self.definition),
+            )
+            pd.testing.assert_frame_equal(bundle["dataframe"], normalized_prediction_log)
+
     def test_prediction_log_rejects_missing_traceability_columns(self) -> None:
         prediction_log = self._build_prediction_log().drop(columns=["model_artifact_path"])
         with self.assertRaisesRegex(ValueError, "missing required columns: model_artifact_path"):
@@ -148,6 +202,23 @@ class M4PredictionLogTests(unittest.TestCase):
         prediction_log.loc[0, "predicted_probability"] = 1.5
         with self.assertRaisesRegex(ValueError, "within \\[0, 1\\]"):
             normalize_m4_prediction_log(prediction_log, self.definition)
+
+    def test_prediction_log_normalizes_mixed_timezone_inputs(self) -> None:
+        prediction_log = self._build_prediction_log()
+        prediction_log["date"] = [
+            "2025-01-02 09:30:00-05:00",
+            pd.Timestamp("2025-01-02 14:30:00"),
+        ]
+        prediction_log["target_date"] = [
+            "2025-01-03 16:00:00-05:00",
+            pd.Timestamp("2025-01-03 21:00:00"),
+        ]
+
+        normalized = normalize_m4_prediction_log(prediction_log, self.definition)
+        self.assertTrue(pd.api.types.is_datetime64_ns_dtype(normalized["date"]))
+        self.assertTrue(pd.api.types.is_datetime64_ns_dtype(normalized["target_date"]))
+        self.assertFalse(normalized["date"].isna().any())
+        self.assertFalse(normalized["target_date"].isna().any())
 
 
 if __name__ == "__main__":
