@@ -1,0 +1,10 @@
+prediction:
+  milestone: M4
+  contract_name: m4_official_baseline_batch_prediction
+  version: 1
+  training_config_path: config/modeling/m4_baselines.yaml
+  output_dir: outputs/predictions/model_batches
+  strategy_name: M4BaselineBatchPrediction
+  run_label: m4-batch-predictions
+  inference_partition: validation
+  prediction_task_type: classification
