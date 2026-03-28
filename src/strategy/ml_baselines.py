@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import hashlib
 import json
 import pickle
 from dataclasses import asdict, dataclass
@@ -105,6 +106,16 @@ def _format_date(value: Any) -> str | None:
     if value is None or pd.isna(value):
         return None
     return pd.Timestamp(value).strftime("%Y-%m-%d")
+
+
+def build_dataframe_signature(dataframe: pd.DataFrame) -> str:
+    normalized = dataframe.reset_index(drop=True)
+    row_hashes = pd.util.hash_pandas_object(normalized, index=False, categorize=False)
+    digest = hashlib.sha256()
+    digest.update("\x1f".join(str(column) for column in normalized.columns).encode("utf-8"))
+    digest.update("\x1f".join(str(dtype) for dtype in normalized.dtypes).encode("utf-8"))
+    digest.update(row_hashes.to_numpy(dtype="uint64", copy=False).tobytes())
+    return digest.hexdigest()
 
 
 def load_m4_baseline_training_definition(
@@ -491,6 +502,7 @@ def run_m4_baseline_training(
     y_train = prepared["y_train"]
     y_validation = prepared["y_validation"]
     split_summary = prepared["split_summary"]
+    validation_dataset_signature = build_dataframe_signature(prepared["validation_dataframe"])
     split_metadata_path = prepared["split_metadata_path"]
     resolved_split_definition = prepared["split_definition"]
     resolved_target_definition = prepared["target_definition"]
@@ -539,6 +551,7 @@ def run_m4_baseline_training(
         "split_metadata_path": str(split_metadata_path),
         "split_metadata_exists": bool(split_metadata_path.exists()),
         "summary": split_summary,
+        "validation_dataset_signature": validation_dataset_signature,
         "time_safety": {
             "train_target_date_end": split_summary["train_target_date_end"],
             "validation_target_date_start": split_summary["validation_target_date_start"],
@@ -636,7 +649,10 @@ def run_m4_baseline_training(
                 "boundary_column": resolved_split_definition.target_timestamp_column,
                 "validation_start_date": resolved_split_definition.validation_start_date,
                 "validation_end_date": resolved_split_definition.validation_end_date,
-                "summary": split_summary,
+                "summary": {
+                    **split_summary,
+                    "validation_dataset_signature": validation_dataset_signature,
+                },
             },
             "feature_schema_artifact": str(feature_schema_path),
             "split_summary_artifact": str(split_summary_path),

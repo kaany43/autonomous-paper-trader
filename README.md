@@ -71,6 +71,7 @@ The official M4 target contract, modeling dataset export, preparation pipeline, 
 - `docs/m4_target_preparation.md`
 - `docs/m4_train_validation_split.md`
 - `docs/m4_baseline_training.md`
+- `docs/m4_baseline_evaluation_reports.md`
 
 Prepare the modeling dataset from the reusable processed feature parquet with:
 
@@ -88,4 +89,10 @@ Train the first official M4 baseline tabular models with:
 
 ```bash
 python -m src.strategy.train_baselines
+```
+
+Evaluate a trained M4 baseline run with:
+
+```bash
+python -m src.engine.evaluate_baselines --training-summary outputs/models/<training_run_id>/baseline_training_summary.json
 ```
