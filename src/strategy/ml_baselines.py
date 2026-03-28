@@ -388,13 +388,21 @@ def prepare_m4_baseline_training_data(
         validate=True,
     )
 
-    schema = bundle.get("schema") or {}
-    if not schema or "feature_columns" not in schema:
-        schema = build_m4_modeling_dataset_schema(
-            dataset_definition=bundle["dataset_definition"],
-            target_definition=bundle["target_definition"],
-            split_definition=bundle["split_definition"],
-        )
+    schema = build_m4_modeling_dataset_schema(
+        dataset_definition=bundle["dataset_definition"],
+        target_definition=bundle["target_definition"],
+        split_definition=bundle["split_definition"],
+    )
+    metadata_schema = bundle.get("schema") or {}
+    metadata_feature_columns = metadata_schema.get("feature_columns")
+    if metadata_feature_columns is not None:
+        metadata_feature_columns = [str(column) for column in metadata_feature_columns]
+        official_feature_columns = [str(column) for column in schema.get("feature_columns", [])]
+        if metadata_feature_columns != official_feature_columns:
+            raise ValueError(
+                "Modeling dataset metadata feature_columns do not match the official schema. "
+                "Regenerate modeling dataset metadata before running baseline training."
+            )
 
     feature_columns = list(schema.get("feature_columns", []))
     if not feature_columns:

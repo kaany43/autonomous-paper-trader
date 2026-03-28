@@ -256,6 +256,30 @@ class M4BaselineTrainingTests(unittest.TestCase):
                     target_definition=self.target_definition,
                 )
 
+    def test_training_rejects_stale_metadata_feature_columns(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp_dir:
+            tmp_path = Path(tmp_dir)
+            modeling_df = self._build_modeling_dataset()
+            dataset_path, metadata_path = self._write_modeling_artifacts(tmp_path, modeling_df)
+            metadata_path.write_text(
+                json.dumps({"schema": {"feature_columns": ["ret_1d"]}}, indent=2),
+                encoding="utf-8",
+            )
+
+            definition = replace(
+                self.training_definition,
+                modeling_dataset_path=str(dataset_path),
+                modeling_dataset_metadata_path=str(metadata_path),
+                output_dir=str(tmp_path / "outputs" / "models"),
+            )
+
+            with self.assertRaisesRegex(ValueError, "feature_columns do not match the official schema"):
+                run_m4_baseline_training(
+                    training_definition=definition,
+                    split_definition=self.split_definition,
+                    target_definition=self.target_definition,
+                )
+
     def test_training_fails_clearly_when_training_target_has_single_class(self) -> None:
         with tempfile.TemporaryDirectory() as tmp_dir:
             tmp_path = Path(tmp_dir)
