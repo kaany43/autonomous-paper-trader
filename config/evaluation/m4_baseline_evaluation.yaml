@@ -1,0 +1,13 @@
+evaluation:
+  milestone: M4
+  contract_name: m4_official_baseline_model_evaluation
+  version: 1
+  training_config_path: config/modeling/m4_baselines.yaml
+  output_dir: outputs/reports/model_evaluations
+  strategy_name: M4BaselineModelEvaluation
+  run_label: m4-baseline-evaluation
+  metrics:
+    - accuracy
+    - precision
+    - recall
+    - f1
