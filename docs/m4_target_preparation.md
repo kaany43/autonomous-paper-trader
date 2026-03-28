@@ -1,6 +1,6 @@
 # M4 Target Preparation Pipeline
 
-This document describes the dedicated, leakage-safe preparation step that turns processed market features into the official M4 modeling dataset.
+This document describes the dedicated, leakage-safe preparation step that turns processed market features into the official M4 modeling dataset export.
 
 ## Source and outputs
 
@@ -66,6 +66,7 @@ python -m src.data.target_pipeline --input data/processed/market_features.parque
 
 ## Relationship to later ML steps
 
+- The official modeling dataset contract is documented in `docs/m4_modeling_dataset.md`.
 - Later splitting and training steps should consume `data/processed/m4_modeling_dataset.parquet`.
 - The official holdout split is documented in `docs/m4_train_validation_split.md`.
 - The split entrypoint is `python -m src.data.split_pipeline`, which writes reusable train/validation parquet files plus split metadata.

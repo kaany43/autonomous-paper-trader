@@ -67,5 +67,6 @@ The current project operates on daily processed bars and current simulator code 
 
 The reproducible target-preparation workflow lives in `src/data/target_pipeline.py` and reads from `data/processed/market_features.parquet`.
 
+See `docs/m4_modeling_dataset.md` for the official modeling dataset schema, saved artifact paths, and reusable reload helper.
 See `docs/m4_target_preparation.md` for the saved output paths, rerun command, and invalid-row handling in the modeling dataset.
 See `docs/m4_train_validation_split.md` for the official train/validation holdout contract that consumes the prepared modeling dataset.

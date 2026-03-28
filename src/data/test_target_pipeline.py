@@ -7,6 +7,10 @@ from pathlib import Path
 
 import pandas as pd
 
+from src.data.modeling_dataset import (
+    get_m4_modeling_dataset_column_order,
+    load_m4_modeling_dataset_definition,
+)
 from src.data.target_pipeline import prepare_m4_modeling_dataset, run_m4_target_preparation
 from src.data.targets import (
     TARGET_DATE_COLUMN,
@@ -15,69 +19,106 @@ from src.data.targets import (
 )
 
 
+def _feature_row(
+    *,
+    date: str,
+    symbol: str,
+    adj_close: float | object,
+    ret_1d: float | object,
+    extra: dict[str, object] | None = None,
+) -> dict[str, object]:
+    row: dict[str, object] = {
+        "date": date,
+        "symbol": symbol,
+        "open": adj_close,
+        "high": adj_close,
+        "low": adj_close,
+        "close": adj_close,
+        "adj_close": adj_close,
+        "volume": 1000,
+        "dividends": 0.0,
+        "stock_splits": 0.0,
+        "ret_1d": ret_1d,
+        "ret_5d": 0.0,
+        "ret_10d": 0.0,
+        "ma_10": 1.0,
+        "ma_20": 1.0,
+        "ma_50": 1.0,
+        "vol_20": 0.1,
+        "volume_change_1d": 0.0,
+        "volume_ma_20": 1000.0,
+        "volume_ratio_20": 1.0,
+        "price_vs_ma10": 0.0,
+        "price_vs_ma20": 0.0,
+        "price_vs_ma50": 0.0,
+        "ma10_vs_ma20": 0.0,
+        "ma20_vs_ma50": 0.0,
+        "rolling_high_20": float(adj_close) if adj_close is not pd.NA else pd.NA,
+        "rolling_low_20": float(adj_close) if adj_close is not pd.NA else pd.NA,
+        "range_pos_20": 0.5,
+    }
+    if extra:
+        row.update(extra)
+    return row
+
+
 class M4TargetPipelineTests(unittest.TestCase):
     def setUp(self) -> None:
         self.definition = load_m4_target_definition()
+        self.dataset_definition = load_m4_modeling_dataset_definition()
 
     def test_prepare_modeling_dataset_is_deterministic_and_strips_legacy_target_columns(self) -> None:
         features = pd.DataFrame(
             [
-                {
-                    "date": "2024-01-03",
-                    "symbol": "BBB",
-                    "adj_close": 205.0,
-                    "ret_1d": 0.0789,
-                    "target_ret_1d": 999.0,
-                    "target_up_1d": 1,
-                },
-                {
-                    "date": "2024-01-02",
-                    "symbol": "AAA",
-                    "adj_close": 100.0,
-                    "ret_1d": 0.0,
-                    "target_ret_1d": 999.0,
-                    "target_up_1d": 1,
-                },
-                {
-                    "date": "2024-01-02",
-                    "symbol": "AAA",
-                    "adj_close": 101.0,
-                    "ret_1d": 0.01,
-                    "target_ret_1d": 999.0,
-                    "target_up_1d": 1,
-                },
-                {
-                    "date": "2024-01-04",
-                    "symbol": "AAA",
-                    "adj_close": 99.0,
-                    "ret_1d": -0.1,
-                    "target_ret_1d": 999.0,
-                    "target_up_1d": 0,
-                },
-                {
-                    "date": "2024-01-01",
-                    "symbol": "BBB",
-                    "adj_close": 190.0,
-                    "ret_1d": 0.0,
-                    "target_ret_1d": 999.0,
-                    "target_up_1d": 1,
-                },
-                {
-                    "date": "2024-01-03",
-                    "symbol": "AAA",
-                    "adj_close": 110.0,
-                    "ret_1d": 0.0891,
-                    "target_ret_1d": 999.0,
-                    "target_up_1d": 1,
-                },
-                {
-                    "date": "2024-01-04",
-                    "symbol": "BBB",
-                    "adj_close": 200.0,
-                    "ret_1d": -0.0244,
-                    "target_ret_1d": 999.0,
-                    "target_up_1d": 0,
-                },
+                _feature_row(
+                    date="2024-01-03",
+                    symbol="BBB",
+                    adj_close=205.0,
+                    ret_1d=0.0789,
+                    extra={"target_ret_1d": 999.0, "target_up_1d": 1},
+                ),
+                _feature_row(
+                    date="2024-01-02",
+                    symbol="AAA",
+                    adj_close=100.0,
+                    ret_1d=0.0,
+                    extra={"target_ret_1d": 999.0, "target_up_1d": 1},
+                ),
+                _feature_row(
+                    date="2024-01-02",
+                    symbol="AAA",
+                    adj_close=101.0,
+                    ret_1d=0.01,
+                    extra={"target_ret_1d": 999.0, "target_up_1d": 1},
+                ),
+                _feature_row(
+                    date="2024-01-04",
+                    symbol="AAA",
+                    adj_close=99.0,
+                    ret_1d=-0.1,
+                    extra={"target_ret_1d": 999.0, "target_up_1d": 0},
+                ),
+                _feature_row(
+                    date="2024-01-01",
+                    symbol="BBB",
+                    adj_close=190.0,
+                    ret_1d=0.0,
+                    extra={"target_ret_1d": 999.0, "target_up_1d": 1},
+                ),
+                _feature_row(
+                    date="2024-01-03",
+                    symbol="AAA",
+                    adj_close=110.0,
+                    ret_1d=0.0891,
+                    extra={"target_ret_1d": 999.0, "target_up_1d": 1},
+                ),
+                _feature_row(
+                    date="2024-01-04",
+                    symbol="BBB",
+                    adj_close=200.0,
+                    ret_1d=-0.0244,
+                    extra={"target_ret_1d": 999.0, "target_up_1d": 0},
+                ),
             ]
         )
 
@@ -124,15 +165,19 @@ class M4TargetPipelineTests(unittest.TestCase):
         )
         self.assertEqual(first_summary["dropped_duplicate_row_count"], 1)
         self.assertEqual(first_summary["dropped_invalid_row_count"], 2)
+        self.assertEqual(
+            list(first.columns),
+            get_m4_modeling_dataset_column_order(self.dataset_definition, self.definition),
+        )
 
     def test_prepare_modeling_dataset_drops_invalid_rows_consistently(self) -> None:
         features = pd.DataFrame(
             [
-                {"date": "2024-01-01", "symbol": "AAA", "adj_close": 10.0, "ret_1d": 0.0},
-                {"date": "2024-01-02", "symbol": "AAA", "adj_close": pd.NA, "ret_1d": pd.NA},
-                {"date": "2024-01-01", "symbol": "BBB", "adj_close": 5.0, "ret_1d": 0.0},
-                {"date": "2024-01-02", "symbol": "BBB", "adj_close": 6.0, "ret_1d": 0.2},
-                {"date": "2024-01-03", "symbol": "BBB", "adj_close": 7.0, "ret_1d": 0.1667},
+                _feature_row(date="2024-01-01", symbol="AAA", adj_close=10.0, ret_1d=0.0),
+                _feature_row(date="2024-01-02", symbol="AAA", adj_close=pd.NA, ret_1d=pd.NA),
+                _feature_row(date="2024-01-01", symbol="BBB", adj_close=5.0, ret_1d=0.0),
+                _feature_row(date="2024-01-02", symbol="BBB", adj_close=6.0, ret_1d=0.2),
+                _feature_row(date="2024-01-03", symbol="BBB", adj_close=7.0, ret_1d=0.1667),
             ]
         )
 
@@ -158,11 +203,22 @@ class M4TargetPipelineTests(unittest.TestCase):
         with self.assertRaisesRegex(ValueError, "missing required columns: adj_close"):
             prepare_m4_modeling_dataset(features, self.definition)
 
+    def test_prepare_modeling_dataset_rejects_schema_drift_after_target_generation(self) -> None:
+        features = pd.DataFrame(
+            [
+                _feature_row(date="2024-01-01", symbol="AAA", adj_close=10.0, ret_1d=0.0),
+                _feature_row(date="2024-01-02", symbol="AAA", adj_close=11.0, ret_1d=0.1),
+            ]
+        ).drop(columns=["ma_50"])
+
+        with self.assertRaisesRegex(ValueError, "missing required columns: ma_50"):
+            prepare_m4_modeling_dataset(features, self.definition)
+
     def test_prepare_modeling_dataset_rejects_invalid_dates(self) -> None:
         features = pd.DataFrame(
             [
-                {"date": "not-a-date", "symbol": "AAA", "adj_close": 10.0, "ret_1d": 0.0},
-                {"date": "2024-01-02", "symbol": "AAA", "adj_close": 11.0, "ret_1d": 0.1},
+                _feature_row(date="not-a-date", symbol="AAA", adj_close=10.0, ret_1d=0.0),
+                _feature_row(date="2024-01-02", symbol="AAA", adj_close=11.0, ret_1d=0.1),
             ]
         )
 
@@ -172,9 +228,9 @@ class M4TargetPipelineTests(unittest.TestCase):
     def test_run_target_preparation_writes_loadable_outputs(self) -> None:
         features = pd.DataFrame(
             [
-                {"date": "2024-01-01", "symbol": "AAA", "adj_close": 10.0, "ret_1d": 0.0},
-                {"date": "2024-01-02", "symbol": "AAA", "adj_close": 11.0, "ret_1d": 0.1},
-                {"date": "2024-01-03", "symbol": "AAA", "adj_close": 10.5, "ret_1d": -0.0455},
+                _feature_row(date="2024-01-01", symbol="AAA", adj_close=10.0, ret_1d=0.0),
+                _feature_row(date="2024-01-02", symbol="AAA", adj_close=11.0, ret_1d=0.1),
+                _feature_row(date="2024-01-03", symbol="AAA", adj_close=10.5, ret_1d=-0.0455),
             ]
         )
 
@@ -201,18 +257,21 @@ class M4TargetPipelineTests(unittest.TestCase):
             metadata = json.loads(metadata_path.read_text(encoding="utf-8"))
             self.assertEqual(metadata["input_dataset"]["path"], str(input_path))
             self.assertEqual(metadata["output_dataset"]["path"], str(output_path))
+            self.assertEqual(metadata["dataset_definition"]["contract_name"], "m4_official_modeling_dataset")
+            self.assertEqual(metadata["schema"]["identifier_columns"], ["symbol"])
+            self.assertEqual(metadata["schema"]["feature_timestamp_columns"], ["date"])
+            self.assertEqual(metadata["schema"]["target_timestamp_columns"], ["target_date"])
             self.assertEqual(
-                metadata["target_columns"],
+                metadata["schema"]["target_label_columns"],
                 [
-                    TARGET_DATE_COLUMN,
-                    TARGET_VALID_COLUMN,
                     self.definition.helper_return_column,
                     self.definition.official_target_column,
                 ],
             )
+            self.assertEqual(metadata["split_ready_metadata"]["boundary_column"], "target_date")
             self.assertEqual(
-                metadata["invalid_label_handling"]["pipeline_rule"],
-                "drop rows where target_is_valid is false after label construction",
+                metadata["invalid_label_handling"]["dataset_policy"],
+                "drop_rows_where_target_is_valid_is_false",
             )
 
 
