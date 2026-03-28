@@ -279,6 +279,10 @@ def normalize_m4_modeling_dataset(
         raise ValueError("Modeling dataset export requires valid non-null target timestamps.")
 
     for column in resolved_dataset_definition.identifier_columns:
+        if normalized[column].isna().any():
+            raise ValueError(
+                f"Modeling dataset export requires valid non-null identifier values in '{column}'."
+            )
         normalized[column] = normalized[column].astype(str).str.upper().str.strip()
         if normalized[column].eq("").any():
             raise ValueError(

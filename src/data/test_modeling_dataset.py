@@ -209,6 +209,15 @@ class M4ModelingDatasetTests(unittest.TestCase):
                 target_definition=self.target_definition,
             )
 
+        null_identifier = modeling_df.copy()
+        null_identifier.loc[0, "symbol"] = pd.NA
+        with self.assertRaisesRegex(ValueError, "valid non-null identifier values in 'symbol'"):
+            normalize_m4_modeling_dataset(
+                null_identifier,
+                dataset_definition=self.dataset_definition,
+                target_definition=self.target_definition,
+            )
+
         bad_order = modeling_df.copy()[list(reversed(modeling_df.columns))]
         with self.assertRaisesRegex(ValueError, "official schema order"):
             validate_m4_modeling_dataset_contract(
