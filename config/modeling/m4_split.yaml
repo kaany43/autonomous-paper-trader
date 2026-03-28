@@ -1,0 +1,11 @@
+split:
+  milestone: M4
+  contract_name: m4_official_time_aware_holdout
+  version: 1
+  method: chronological_holdout_by_target_date_window
+  symbol_column: symbol
+  feature_timestamp_column: date
+  target_timestamp_column: target_date
+  official_target_column: target_next_session_direction
+  validation_start_date: "2025-01-01"
+  validation_end_date: "2025-12-31"
