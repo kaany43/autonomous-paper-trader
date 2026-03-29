@@ -74,6 +74,7 @@ The official M4 target contract, modeling dataset export, preparation pipeline, 
 - `docs/m4_baseline_evaluation_reports.md`
 - `docs/m4_batch_prediction_pipeline.md`
 - `docs/m4_model_output_logging.md`
+- `docs/m4_ml_vs_rule_comparison.md`
 
 Prepare the modeling dataset from the reusable processed feature parquet with:
 
@@ -103,4 +104,10 @@ Generate reusable batch predictions from a trained M4 baseline run with:
 
 ```bash
 python -m src.engine.generate_predictions --training-summary outputs/models/<training_run_id>/baseline_training_summary.json
+```
+
+Compare a logged M4 prediction run against the current rule-based momentum strategy with:
+
+```bash
+python -m src.engine.compare_ml_vs_rule --predictions outputs/predictions/model_batches/<prediction_run_id>/baseline_model_predictions.parquet
 ```
