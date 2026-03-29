@@ -1,0 +1,14 @@
+comparison:
+  milestone: M4
+  contract_name: m4_official_ml_vs_rule_comparison
+  version: 1
+  training_config_path: config/modeling/m4_baselines.yaml
+  prediction_config_path: config/evaluation/m4_batch_prediction.yaml
+  prediction_log_config_path: config/modeling/m4_prediction_logs.yaml
+  strategy_config_path: config/settings.yaml
+  feature_dataset_path: data/processed/market_features.parquet
+  output_dir: outputs/reports/ml_vs_rule_comparisons
+  strategy_name: M4MLVsRuleComparison
+  run_label: m4-ml-vs-rule-comparison
+  methodology_name: validation_signal_alignment
+  comparison_signal_column: rule_entry_signal
