@@ -833,6 +833,22 @@ def run_m4_ml_vs_rule_comparison(
         actual_target_column=training_bundle["training_definition"].target_column,
         actual_return_column=training_bundle["target_definition"].helper_return_column,
     )
+    summary_split = training_bundle["training_summary"].get("official_split", {}).get("summary", {})
+    expected_validation_signature = str(
+        training_bundle["split_summary"].get("validation_dataset_signature")
+        or summary_split.get("validation_dataset_signature")
+        or ""
+    ).strip()
+    if not expected_validation_signature:
+        raise ValueError(
+            "Training artifacts are missing validation_dataset_signature; rerun baseline training to "
+            "enable immutable validation dataset checks."
+        )
+    rebuilt_validation_signature = build_dataframe_signature(prepared["validation_dataframe"])
+    if rebuilt_validation_signature != expected_validation_signature:
+        raise ValueError(
+            "Rebuilt validation partition signature does not match the stored training artifacts."
+        )
 
     _validate_prediction_rows(
         prediction_df,

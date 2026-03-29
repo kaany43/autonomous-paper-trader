@@ -398,6 +398,55 @@ class M4MLVsRuleComparisonTests(unittest.TestCase):
                     comparison_definition=comparison_definition,
                 )
 
+    def test_comparison_fails_when_validation_dataset_signature_changes(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp_dir:
+            tmp_path = Path(tmp_dir)
+            feature_dataset_path, modeling_dataset_path, modeling_metadata_path, settings_path = self._write_input_artifacts(
+                tmp_path
+            )
+            training_definition = replace(
+                self.training_definition,
+                modeling_dataset_path=str(modeling_dataset_path),
+                modeling_dataset_metadata_path=str(modeling_metadata_path),
+                output_dir=str(tmp_path / "outputs" / "models"),
+                split_metadata_path=str(tmp_path / "m4_train_validation_split.metadata.json"),
+            )
+            training_result = run_m4_baseline_training(
+                training_definition=training_definition,
+                split_definition=self.split_definition,
+                target_definition=self.target_definition,
+            )
+            prediction_definition = replace(
+                self.prediction_definition,
+                output_dir=str(tmp_path / "outputs" / "predictions" / "model_batches"),
+            )
+            prediction_result = run_m4_batch_prediction(
+                training_summary_path=Path(str(training_result["training_summary_path"])),
+                prediction_definition=prediction_definition,
+            )
+
+            mutated_modeling_df = pd.read_parquet(modeling_dataset_path)
+            validation_mask = pd.to_datetime(mutated_modeling_df["target_date"]) == pd.Timestamp("2024-01-09")
+            mutated_modeling_df.loc[validation_mask, "target_next_session_direction"] = 1
+            mutated_modeling_df.loc[validation_mask, "target_next_session_return"] = 0.02
+            mutated_modeling_df.to_parquet(modeling_dataset_path, index=False)
+
+            comparison_definition = replace(
+                self.comparison_definition,
+                output_dir=str(tmp_path / "outputs" / "reports" / "ml_vs_rule_comparisons"),
+                strategy_config_path=str(settings_path),
+                feature_dataset_path=str(feature_dataset_path),
+            )
+            with self.assertRaisesRegex(
+                ValueError,
+                "Rebuilt validation partition signature does not match the stored training artifacts",
+            ):
+                run_m4_ml_vs_rule_comparison(
+                    predictions_path=Path(str(prediction_result["predictions_path"])),
+                    metadata_path=Path(str(prediction_result["prediction_log_metadata_path"])),
+                    comparison_definition=comparison_definition,
+                )
+
     def test_summary_captures_decision_oriented_disagreement_context(self) -> None:
         with tempfile.TemporaryDirectory() as tmp_dir:
             tmp_path = Path(tmp_dir)
